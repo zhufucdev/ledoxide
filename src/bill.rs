@@ -1,15 +1,18 @@
 use std::sync::{Arc, LazyLock, Mutex};
 
-use serde::Serialize;
+use serde::{
+    Deserialize, Serialize,
+    de::{Unexpected, Visitor},
+};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bill {
     pub notes: String,
     pub amount: f32,
     pub category: Option<Category>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Category(usize);
 
 impl Category {
@@ -46,3 +49,43 @@ impl Category {
 
 static CATEGORIES: LazyLock<Arc<Mutex<Option<Vec<String>>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(None)));
+
+impl Serialize for Category {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.name().as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Category {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let name = deserializer.deserialize_string(CategoryNameVisitor)?;
+        Ok(
+            Category::from_name(&name).ok_or(serde::de::Error::invalid_value(
+                Unexpected::Str(&name),
+                &CategoryNameVisitor {},
+            ))?,
+        )
+    }
+}
+
+struct CategoryNameVisitor;
+impl<'de> Visitor<'de> for CategoryNameVisitor {
+    type Value = String;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(formatter, "a registered category name")
+    }
+
+    fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(v)
+    }
+}

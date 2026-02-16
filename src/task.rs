@@ -235,7 +235,7 @@ pub enum State {
     Finished(Result<Success, Arc<RunTaskError>>),
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Success(pub Bill);
 
@@ -245,6 +245,23 @@ impl Serialize for State {
         S: serde::Serializer,
     {
         serializer.serialize_str(self.to_string().as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for State {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "pending" => Ok(State::Pending),
+            "running" => Ok(State::Running),
+            "finished" => Ok(State::Finished(Err(Arc::new(RunTaskError::Mistral(
+                anyhow::anyhow!("deserialized finished state without result"),
+            ))))),
+            _ => Err(serde::de::Error::custom(format!("unknown state: {}", s))),
+        }
     }
 }
 
@@ -269,5 +286,47 @@ impl Serialize for TaskControlBlock {
             )?;
         }
         sstate.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for TaskControlBlock {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct TaskData {
+            id: String,
+            state: String,
+            success: Option<Success>,
+            error: Option<String>,
+        }
+
+        let data = TaskData::deserialize(deserializer)?;
+        let state = match data.state.as_str() {
+            "pending" => State::Pending,
+            "running" => State::Running,
+            "finished" => {
+                if let Some(success) = data.success {
+                    State::Finished(Ok(success))
+                } else if let Some(error) = data.error {
+                    State::Finished(Err(Arc::new(RunTaskError::Mistral(anyhow::anyhow!(error)))))
+                } else {
+                    return Err(serde::de::Error::custom(
+                        "finished state without success or error",
+                    ));
+                }
+            }
+            _ => {
+                return Err(serde::de::Error::custom(format!(
+                    "unknown state: {}",
+                    data.state
+                )));
+            }
+        };
+        Ok(TaskControlBlock {
+            id: data.id,
+            state: Arc::new(RwLock::new(state)),
+        })
     }
 }

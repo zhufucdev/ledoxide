@@ -2801,10 +2801,12 @@ dependencies = [
  "pretty_env_logger",
  "rand 0.10.0",
  "regex",
+ "reqwest 0.13.2",
  "serde",
  "serde_json",
  "strum",
  "tokio",
+ "tower",
 ]
 
 [[package]]
@@ -4440,6 +4442,7 @@ dependencies = [
  "js-sys",
  "log",
  "mime",
+ "mime_guess",
  "percent-encoding",
  "pin-project-lite",
  "quinn",

@@ -114,6 +114,11 @@ impl Scheduler {
 
 impl Default for Scheduler {
     fn default() -> Self {
-        Self::new(4, Duration::from_mins(5), "Qwen/Qwen3-VL-4B-Instruct", "Qwen/Qwen3-4B-Instruct-2507")
+        Self::new(
+            4,
+            Duration::from_mins(5),
+            "Qwen/Qwen3-VL-4B-Instruct",
+            "Qwen/Qwen3-4B-Instruct-2507",
+        )
     }
 }

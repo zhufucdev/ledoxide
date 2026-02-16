@@ -20,6 +20,12 @@ serde_json = "1.0.149"
 strum = { version = "0.27.2", features = ["derive"] }
 tokio = { version = "1.49.0", features = ["rt-multi-thread"] }
 
+[dev-dependencies]
+reqwest = { version = "0.13.2", default-features = false, features = [
+	"multipart",
+] }
+tower = { version = "0.5.3", features = ["util"] }
+
 [features]
 cuda = ["mistralrs/cuda"]
 metal = ["mistralrs/metal"]
