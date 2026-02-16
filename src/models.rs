@@ -35,6 +35,7 @@ impl ModelManager {
             log::debug!(target: "model manager", "aborting timeout job for {}", model_id.as_ref());
             timeout_job.abort();
         }
+        self.add_timeout_job(model_id.as_ref()).await;
         if let Some(cached) = self.cache.read().await.get(model_id.as_ref()) {
             log::debug!(target: "model manager", "cache hit for model {}", model_id.as_ref());
             return Ok(Some(cached.clone()));
@@ -49,7 +50,10 @@ impl ModelManager {
             .write()
             .await
             .insert(model_id.as_ref().to_string(), model.clone());
+        Ok(Some(model.clone()))
+    }
 
+    async fn add_timeout_job(&self, model_id: impl AsRef<str>) {
         let timeout = self.timeout.clone();
         let model_id = model_id.as_ref().to_string();
         let cache = self.cache.clone();
@@ -61,6 +65,5 @@ impl ModelManager {
                 cache.write().await.remove(model_id.as_str());
             }),
         );
-        Ok(Some(model.clone()))
     }
 }

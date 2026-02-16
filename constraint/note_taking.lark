@@ -1,0 +1,2 @@
+start: "Reasoning:\n" text+ "\nNotes:" text+
+text: /./ | "\n"

@@ -1,0 +1,6 @@
+start: "Reasoning:\n" text+ "\nFinal amount: " number
+
+text: /./ | "\n"
+digit: "0".."9"
+float: digit+ "." digit+
+number: float | digit+

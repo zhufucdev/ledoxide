@@ -59,8 +59,8 @@ impl TaskDescriptor {
 
         let lm = model_manager.get_model(lm_id.as_ref()).await?.unwrap();
         let mut request = RequestBuilder::new()
-            .set_constraint(Constraint::Regex(
-                include_str!("../constraint/note_taking.regex").to_string(),
+            .set_constraint(Constraint::Lark(
+                include_str!("../constraint/note_taking.lark").to_string(),
             ))
             .add_message(
                 TextMessageRole::User,
@@ -81,8 +81,8 @@ impl TaskDescriptor {
                     notes, description
                 ),
             )
-            .set_constraint(Constraint::Regex(
-                include_str!("../constraint/amount_extraction.regex").to_string(),
+            .set_constraint(Constraint::Lark(
+                include_str!("../constraint/amount_extraction.lark").to_string(),
             ));
         if let Some(sampling) = &self.lm_sampling {
             request = request.set_sampling(sampling.clone());
@@ -123,8 +123,8 @@ impl TaskDescriptor {
                         .join("\n")
                 ),
             )
-            .set_constraint(Constraint::Regex(format!(
-                include_str!("../constraint/categorization.regex"),
+            .set_constraint(Constraint::Lark(format!(
+                include_str!("../constraint/categorization.lark"),
                 Category::all_cases()
                     .iter()
                     .map(|c| c.name())
@@ -259,14 +259,14 @@ impl Serialize for TaskControlBlock {
             _ => None,
         };
         let mut sstate = serializer.serialize_struct("Task", result.map(|_| 4).unwrap_or(2))?;
-        sstate.serialize_field("id", &self.id);
-        sstate.serialize_field("state", &state);
+        sstate.serialize_field("id", &self.id)?;
+        sstate.serialize_field("state", &state)?;
         if let Some(result) = result {
-            sstate.serialize_field("success", &result.as_ref().ok().clone());
+            sstate.serialize_field("success", &result.as_ref().ok().clone())?;
             sstate.serialize_field(
                 "error",
                 &result.as_ref().err().map(|err| err.to_string()).clone(),
-            );
+            )?;
         }
         sstate.end()
     }

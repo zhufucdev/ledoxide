@@ -20,6 +20,7 @@ pub struct Scheduler {
 impl Scheduler {
     pub fn new(
         max_concurrency: usize,
+        model_timeout: Duration,
         vlm_id: impl ToString + Send + Sync + 'static,
         lm_id: impl ToString + Send + Sync + 'static,
     ) -> Self {
@@ -49,7 +50,7 @@ impl Scheduler {
             vlm_id: vlm_id_copy.clone(),
             lm_id: lm_id_copy.clone(),
             model_manager: Arc::new(ModelManager::new(
-                Duration::from_mins(5),
+                model_timeout,
                 HashMap::from([(vlm_id_copy, vlm_builder), (lm_id_copy, lm_builder)]),
             )),
         }
@@ -113,6 +114,6 @@ impl Scheduler {
 
 impl Default for Scheduler {
     fn default() -> Self {
-        Self::new(4, "Qwen/Qwen3-VL-4B-Instruct", "Qwen/Qwen3-4B-Thinking-2507-FP8")
+        Self::new(4, Duration::from_mins(5), "Qwen/Qwen3-VL-4B-Instruct", "Qwen/Qwen3-4B-Instruct-2507")
     }
 }
