@@ -66,7 +66,7 @@
                 cargo-edit
                 cargo-watch
                 rust-analyzer
-
+                addDriverRunpath
               ]
               ++ lib.optionals stdenv.isLinux [
                 cudaPackages.cudatoolkit
@@ -82,7 +82,7 @@
               CUDA_PATH = "${pkgs.cudaPackages.cudatoolkit}";
               CUDA_COMPUTE_CAP = "89";
               CUDATKDIR = "${pkgs.cudaPackages.cudatoolkit}";
-              LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.cudaPackages.cudatoolkit}/lib:${pkgs.cudaPackages.cudatoolkit}/lib/stubs";
+              LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.cudaPackages.cudatoolkit}/lib:${pkgs.addDriverRunpath.driverLink}/lib";
             };
           };
         }
