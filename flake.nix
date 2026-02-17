@@ -30,8 +30,12 @@
               overlays = [
                 inputs.self.overlays.default
               ];
-              config.allowUnfree = true;
-              config.cudaSupport = true;
+              config = {
+                cudaCapabilities = [ "6.1" ];
+                cudaForwardCompat = true;
+                allowUnfree = true;
+                cudaSupport = true;
+              };
             };
           }
         );
@@ -80,7 +84,7 @@
             }
             // lib.optionalAttrs pkgs.stdenv.isLinux {
               CUDA_PATH = "${pkgs.cudaPackages.cudatoolkit}";
-              CUDA_COMPUTE_CAP = "89";
+              CUDA_COMPUTE_CAP = "61";
               CUDATKDIR = "${pkgs.cudaPackages.cudatoolkit}";
               LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.cudaPackages.cudatoolkit}/lib:${pkgs.addDriverRunpath.driverLink}/lib";
             };
