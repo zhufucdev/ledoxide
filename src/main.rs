@@ -175,8 +175,11 @@ mod tests {
 
             let tcb: TaskControlBlock =
                 serde_json::from_str(String::from_utf8(body).unwrap().as_str()).unwrap();
-            if let task::State::Finished(Ok(success)) = tcb.state() {
-                check_finished_state(success);
+            if let task::State::Finished(state) = tcb.state() {
+                match state {
+                    Ok(success) => check_finished_state(success),
+                    Err(err) => log::error!("{err}"),
+                }
                 return;
             }
         }
