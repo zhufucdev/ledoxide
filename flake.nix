@@ -31,6 +31,7 @@
                 inputs.self.overlays.default
               ];
               config.allowUnfree = true;
+              config.cudaSupport = true;
             };
           }
         );
@@ -65,10 +66,12 @@
                 cargo-edit
                 cargo-watch
                 rust-analyzer
+
               ]
               ++ lib.optionals stdenv.isLinux [
                 cudaPackages.cudatoolkit
                 cudaPackages.cuda_nvcc
+                cudaPackages.cuda_cudart
               ];
 
             env = {
@@ -77,6 +80,9 @@
             }
             // lib.optionalAttrs pkgs.stdenv.isLinux {
               CUDA_PATH = "${pkgs.cudaPackages.cudatoolkit}";
+              CUDA_COMPUTE_CAP = "89";
+              CUDATKDIR = "${pkgs.cudaPackages.cudatoolkit}";
+              LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.cudaPackages.cudatoolkit}/lib:${pkgs.cudaPackages.cudatoolkit}/lib/stubs";
             };
           };
         }
