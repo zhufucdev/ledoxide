@@ -32,7 +32,7 @@
               ];
               config = {
                 cudaCapabilities = [ "6.1" ];
-                cudaForwardCompat = true;
+                cudaForwardCompat = false;
                 allowUnfree = true;
                 cudaSupport = true;
               };
@@ -72,21 +72,34 @@
                 rust-analyzer
                 addDriverRunpath
               ]
-              ++ lib.optionals stdenv.isLinux [
-                cudaPackages.cudatoolkit
-                cudaPackages.cuda_nvcc
-                cudaPackages.cuda_cudart
-              ];
+              ++ lib.optionals stdenv.isLinux (
+                with cudaPackages;
+                [
+                  cudatoolkit
+                  cuda_nvcc
+                  cuda_cudart
+                  libcublas
+                  libcurand
+                ]
+              );
 
             env = {
               # Required by rust-analyzer
               RUST_SRC_PATH = "${pkgs.rustToolchain}/lib/rustlib/src/rust/library";
             }
             // lib.optionalAttrs pkgs.stdenv.isLinux {
-              CUDA_PATH = "${pkgs.cudaPackages.cudatoolkit}";
               CUDA_COMPUTE_CAP = "61";
               CUDATKDIR = "${pkgs.cudaPackages.cudatoolkit}";
-              LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib:${pkgs.cudaPackages.cudatoolkit}/lib:${pkgs.addDriverRunpath.driverLink}/lib";
+              CUDA_PATH = "${pkgs.cudaPackages.cudatoolkit}";
+
+              # Ensure the driver (libcuda.so) is prioritized
+              LD_LIBRARY_PATH = lib.makeLibraryPath [
+                pkgs.stdenv.cc.cc.lib
+                pkgs.cudaPackages.cuda_cudart
+                pkgs.cudaPackages.libcublas
+                pkgs.cudaPackages.libcurand
+                "/run/opengl-driver"
+              ];
             };
           };
         }
