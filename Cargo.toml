@@ -29,3 +29,4 @@ tower = { version = "0.5.3", features = ["util"] }
 [features]
 cuda = ["mistralrs/cuda"]
 metal = ["mistralrs/metal"]
+accelerate = ["mistralrs/accelerate"]
