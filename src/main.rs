@@ -73,7 +73,7 @@ async fn get_task(
     state
         .scheduler()
         .get_task(task_id)
-        .await
+        .await?
         .ok_or(GetTaskError::NotFound)
         .map(Json)
 }

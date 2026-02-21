@@ -103,16 +103,25 @@ where
 pub enum GetTaskError {
     #[strum(to_string = "task not found")]
     NotFound,
+    #[strum(to_string = "{0}")]
+    Internal(anyhow::Error),
 }
 
 impl IntoResponse for GetTaskError {
     fn into_response(self) -> axum::response::Response {
         let status = match self {
             GetTaskError::NotFound => StatusCode::NOT_FOUND,
+            GetTaskError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
         let body = Json(json!({
                     "error": self.to_string(),
         }));
         (status, body).into_response()
+    }
+}
+
+impl From<anyhow::Error> for GetTaskError {
+    fn from(value: anyhow::Error) -> Self {
+        Self::Internal(value)
     }
 }
