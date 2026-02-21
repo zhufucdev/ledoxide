@@ -8,6 +8,7 @@ use std::{
 use anyhow::anyhow;
 use async_stream::try_stream;
 use futures::{Stream, StreamExt, TryStreamExt, stream};
+use image::EncodableLayout;
 use mistralrs::{PagedAttentionMetaBuilder, TextModelBuilder, VisionModelBuilder};
 use tempfile::tempfile;
 use tokio::{
@@ -150,8 +151,10 @@ impl Scheduler {
     ) -> anyhow::Result<Option<TaskControlBlock>> {
         let aq = self.queues.active.lock().await;
         let pq = self.queues.pending.lock().await;
+        let fq = self.queues.finished.lock().await;
         let stream = stream::iter(aq.iter().map(|(task, _)| task).cloned())
             .chain(stream::iter(pq.iter().cloned().map(|(task, _)| task)))
+            .chain(stream::iter(fq.iter().cloned()))
             .map(|task| Ok(task))
             .chain(self.in_disk_queue_iter());
         pin!(stream);
@@ -268,7 +271,7 @@ mod tests {
             .finished
             .lock()
             .await
-            .last()
+            .first()
             .unwrap()
             .id()
             .to_string();

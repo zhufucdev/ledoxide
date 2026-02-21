@@ -68,7 +68,7 @@ impl<'de> Deserialize<'de> for Category {
         Ok(
             Category::from_name(&name).ok_or(serde::de::Error::invalid_value(
                 Unexpected::Str(&name),
-                &CategoryNameVisitor {},
+                &CategoryNameVisitor,
             ))?,
         )
     }
@@ -87,5 +87,12 @@ impl<'de> Visitor<'de> for CategoryNameVisitor {
         E: serde::de::Error,
     {
         Ok(v)
+    }
+
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(v.to_string())
     }
 }
