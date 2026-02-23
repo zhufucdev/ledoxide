@@ -100,7 +100,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_worflow() {
+    async fn test_workflow() {
         pretty_env_logger::init();
         let auth_key = "WK1wJ5ipiVvSdmdCPqNx8up8qj8GCwbm_";
         Category::load_from_names(["Shopping", "Food", "Transport", "Rent"]);
@@ -181,7 +181,7 @@ mod tests {
             if let task::State::Finished(state) = tcb.state() {
                 match state {
                     Ok(success) => check_finished_state(success),
-                    Err(err) => log::error!("{err}"),
+                    Err(err) => panic!("{err}"),
                 }
                 return;
             }
