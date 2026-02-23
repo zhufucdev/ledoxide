@@ -31,11 +31,14 @@ async fn main() {
     Category::load_from_names(args.categories);
     let auth_key = match args.auth_key {
         Some(key) => key,
-        None => {
-            let random_key = key::generate_random_key();
-            log::error!("missing authorization key, using a random one: {random_key}");
-            random_key
-        }
+        None => match std::env::var("AUTH_KEY") {
+            Ok(key) => key,
+            Err(_) => {
+                let random_key = key::generate_random_key();
+                log::error!("missing authorization key, using a random one: {random_key}");
+                random_key
+            }
+        },
     };
 
     let app = app(auth_key);
