@@ -7,7 +7,7 @@ use tokio::{
     task::JoinHandle,
 };
 
-pub type ModelBuilder = Box<dyn Fn() -> BoxFuture<'static, anyhow::Result<Model>> + Send + Sync>;
+pub struct ModelBuilder(Box<dyn Fn() -> BoxFuture<'static, anyhow::Result<Model>> + Send + Sync>);
 
 /// unloads the model when not in use
 pub struct ModelManager {
@@ -45,7 +45,7 @@ impl ModelManager {
         let Some(builder) = model_builders.get(model_id.as_ref()) else {
             return Ok(None);
         };
-        let model = Arc::<Model>::new(builder().await?);
+        let model = Arc::<Model>::new(builder.0().await?);
         self.cache
             .write()
             .await
@@ -65,5 +65,15 @@ impl ModelManager {
                 cache.write().await.remove(model_id.as_str());
             }),
         );
+    }
+}
+
+impl ModelBuilder {
+    pub fn new<F, Fut>(f: F) -> Self
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = anyhow::Result<Model>> + Send + 'static,
+    {
+        Self(Box::new(move || Box::pin(f())))
     }
 }

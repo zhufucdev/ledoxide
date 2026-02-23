@@ -8,7 +8,9 @@ use std::{
 use anyhow::anyhow;
 use async_stream::try_stream;
 use futures::{Stream, StreamExt, TryStreamExt, stream};
-use mistralrs::{GgufModelBuilder, PagedAttentionMetaBuilder, TextModelBuilder};
+use mistralrs::{
+    GgufModelBuilder, ModelDType, PagedAttentionMetaBuilder, TextModelBuilder, VisionModelBuilder,
+};
 use tempfile::tempfile;
 use tokio::{
     fs::File,
@@ -181,12 +183,12 @@ impl ScheduleQueues {
     ) -> anyhow::Result<usize> {
         fd.seek(SeekFrom::End(0)).await?;
         let mut finished_queue = self.finished.lock().await;
-        let swap_amount = finished_queue.len() - max_memory_size;
+        let swap_amount = finished_queue.len() as i32 - max_memory_size as i32;
         if swap_amount <= 0 {
             log::debug!(target: "scheduler", "finished queue size {} <= max memory size {}, no need to swap", finished_queue.len(), max_memory_size);
             return Ok(0);
         }
-        let items_left = finished_queue.split_off(swap_amount);
+        let items_left = finished_queue.split_off(swap_amount as usize);
         let items_swapped = finished_queue.len();
         let buf = postcard::to_allocvec(finished_queue.as_slice())?;
         log::debug!("len<out> = {}", buf.len());
@@ -204,24 +206,17 @@ impl Default for Scheduler {
             4,
             468_000, // approx. 50 megabytes
             Duration::from_mins(5),
-            Box::new(|| {
-                Box::pin(async {
-                    GgufModelBuilder::new(
-                        "Qwen/Qwen3-VL-4B-Instruct-GGUF",
-                        vec!["Qwen3VL-4B-Instruct-Q4_K_M.gguf"],
-                    )
-                    .with_tok_model_id("Qwen/Qwen3-VL-4B-Instruct")
+            ModelBuilder::new(async || {
+                VisionModelBuilder::new("Qwen/Qwen3-VL-4B-Instruct-FP8")
+                    .with_paged_attn(|| PagedAttentionMetaBuilder::default().build())?
                     .build()
                     .await
-                })
             }),
-            Box::new(|| {
-                Box::pin(async {
-                    TextModelBuilder::new("Qwen/Qwen3-4B-Instruct-2507-FP8")
-                        .with_paged_attn(|| PagedAttentionMetaBuilder::default().build())?
-                        .build()
-                        .await
-                })
+            ModelBuilder::new(async || {
+                TextModelBuilder::new("Qwen/Qwen3-4B-Instruct-2507-FP8")
+                    .with_paged_attn(|| PagedAttentionMetaBuilder::default().build())?
+                    .build()
+                    .await
             }),
         )
     }
