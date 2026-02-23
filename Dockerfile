@@ -26,7 +26,8 @@ ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
 
 WORKDIR /app
 
-COPY * ./
+# See .dockerignore
+COPY . .
 
 # Use BuildKit cache mounts for external build cache
 RUN --mount=type=cache,target=/root/.cargo/registry \
@@ -44,6 +45,8 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
 FROM nvidia/cuda:13.1.1-cudnn-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+# Should mount at runtime
+ENV HF_HOME=/huggingface
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3 \
