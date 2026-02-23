@@ -8,8 +8,7 @@ use std::{
 use anyhow::anyhow;
 use async_stream::try_stream;
 use futures::{Stream, StreamExt, TryStreamExt, stream};
-use image::EncodableLayout;
-use mistralrs::{PagedAttentionMetaBuilder, TextModelBuilder, VisionModelBuilder};
+use mistralrs::{GgufModelBuilder, PagedAttentionMetaBuilder, TextModelBuilder};
 use tempfile::tempfile;
 use tokio::{
     fs::File,
@@ -35,8 +34,6 @@ pub struct Scheduler {
     swap_file: Arc<Mutex<File>>,
     max_memory_size: usize,
     max_concurrency: usize,
-    vlm_id: String,
-    lm_id: String,
     model_manager: Arc<ModelManager>,
 }
 
@@ -45,38 +42,20 @@ impl Scheduler {
         max_concurrency: usize,
         max_memory_size: usize,
         model_timeout: Duration,
-        vlm_id: impl ToString + Send + Sync + 'static,
-        lm_id: impl ToString + Send + Sync + 'static,
+        vlm_builder: ModelBuilder,
+        lm_builder: ModelBuilder,
     ) -> Self {
-        let (vlm_id_copy, lm_id_copy) = (vlm_id.to_string(), lm_id.to_string());
-        let vlm_builder: ModelBuilder = Box::new(move || {
-            let vlm_id = vlm_id.to_string();
-            Box::pin(async move {
-                VisionModelBuilder::new(vlm_id)
-                    .with_paged_attn(|| PagedAttentionMetaBuilder::default().build())?
-                    .build()
-                    .await
-            })
-        });
-        let lm_builder: ModelBuilder = Box::new(move || {
-            let lm_id = lm_id.to_string();
-            Box::pin(async move {
-                TextModelBuilder::new(lm_id)
-                    .with_paged_attn(|| PagedAttentionMetaBuilder::default().build())?
-                    .build()
-                    .await
-            })
-        });
         Self {
             queues: Default::default(),
             max_memory_size,
             swap_file: Arc::new(Mutex::new(tempfile().map(File::from_std).unwrap())),
             max_concurrency,
-            vlm_id: vlm_id_copy.clone(),
-            lm_id: lm_id_copy.clone(),
             model_manager: Arc::new(ModelManager::new(
                 model_timeout,
-                HashMap::from([(vlm_id_copy, vlm_builder), (lm_id_copy, lm_builder)]),
+                HashMap::from([
+                    ("vlm".to_string(), vlm_builder),
+                    ("lm".to_string(), lm_builder),
+                ]),
             )),
         }
     }
@@ -104,11 +83,7 @@ impl Scheduler {
         for _ in 0..self.max_concurrency - active_queue.len() {
             if let Some((tcb, descriptor)) = pending_queue.pop() {
                 tcb.set_state(task::State::Running);
-                let (mm, vlm, lm) = (
-                    self.model_manager.clone(),
-                    self.vlm_id.clone(),
-                    self.lm_id.clone(),
-                );
+                let mm = self.model_manager.clone();
                 let queues = self.queues.clone();
                 let swap_file = self.swap_file.clone();
                 let max_memory_size = self.max_memory_size;
@@ -116,7 +91,7 @@ impl Scheduler {
                     tcb.clone(),
                     tokio::spawn(async move {
                         tcb.set_state(task::State::Finished(
-                            match descriptor.run(mm.as_ref(), vlm, lm).await {
+                            match descriptor.run(mm.as_ref(), "vlm", "lm").await {
                                 Ok(bill) => Ok(task::Success(bill)),
                                 Err(err) => Err(Arc::new(err)),
                             },
@@ -229,8 +204,26 @@ impl Default for Scheduler {
             4,
             468_000, // approx. 50 megabytes
             Duration::from_mins(5),
-            "Qwen/Qwen3-VL-4B-Instruct",
-            "Qwen/Qwen3-4B-Instruct-2507",
+            Box::new(|| {
+                Box::pin(async {
+                    GgufModelBuilder::new(
+                        "Qwen/Qwen3-VL-4B-Instruct-GGUF",
+                        vec!["Qwen3VL-4B-Instruct-Q4_K_M.gguf"],
+                    )
+                    .with_tok_model_id("Qwen/Qwen3-VL-4B-Instruct")
+                    .with_paged_attn(|| PagedAttentionMetaBuilder::default().build())?
+                    .build()
+                    .await
+                })
+            }),
+            Box::new(|| {
+                Box::pin(async {
+                    TextModelBuilder::new("Qwen/Qwen3-4B-Instruct-2507-FP8")
+                        .with_paged_attn(|| PagedAttentionMetaBuilder::default().build())?
+                        .build()
+                        .await
+                })
+            }),
         )
     }
 }
