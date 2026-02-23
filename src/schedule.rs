@@ -211,7 +211,6 @@ impl Default for Scheduler {
                         vec!["Qwen3VL-4B-Instruct-Q4_K_M.gguf"],
                     )
                     .with_tok_model_id("Qwen/Qwen3-VL-4B-Instruct")
-                    .with_paged_attn(|| PagedAttentionMetaBuilder::default().build())?
                     .build()
                     .await
                 })
