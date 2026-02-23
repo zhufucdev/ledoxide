@@ -7,3 +7,4 @@ images:
   - "gcr.io/$PROJECT_ID/ledoxide:latest"
 options:
   logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
