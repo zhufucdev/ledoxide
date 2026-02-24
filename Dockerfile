@@ -42,7 +42,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     find target/release -maxdepth 1 -type f -executable -exec cp {} /app/binary \;
 
 # ─── Runtime Stage ────────────────────────────────────────────────────────────
-FROM nvidia/cuda:13.1.1-cudnn-runtime-ubuntu24.04
+FROM nvidia/cuda:13.1.1-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 # Should mount at runtime
