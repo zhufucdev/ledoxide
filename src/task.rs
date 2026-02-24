@@ -330,3 +330,58 @@ impl<'de> Deserialize<'de> for TaskControlBlock {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::HashMap, time::Duration};
+
+    use mistralrs::{IsqType, PagedAttentionMetaBuilder, ResponseOk, TextModelBuilder};
+
+    use crate::models::ModelBuilder;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_qwen() {
+        pretty_env_logger::init();
+        let model_manager = ModelManager::new(
+            Duration::from_mins(5),
+            HashMap::from([(
+                "lm".to_string(),
+                ModelBuilder::new(async || {
+                    TextModelBuilder::new("Qwen/Qwen3-4B")
+                        .with_paged_attn(|| PagedAttentionMetaBuilder::default().build())?
+                        .build()
+                        .await
+                }),
+            )]),
+        );
+        let lm = model_manager.get_model("lm").await.unwrap().unwrap();
+        let description = r#"description: - In the top bar, there is no header text, indicating this image is a screenshot of a social media post or listing, telling the user an incoming sale of a vivo X200 Ultra smartphone.
+- For main content, there are several items, including a collage of nine images showing the vivo X200 Ultra from various angles (back, side, front, and held in hand), with text overlays identifying the model and featuring the Zeiss logo, and a final image showing the phone's screen displaying a sales page with Chinese text.
+- For bottom section, there is a text block in pink font indicating the item is for sale with hashtags, contact information (T.), price (21888), and a description of the phone's condition (16+512GB, suspected replacement screen with a minor gap, but all functions normal, with official warranty still valid for over a month).
+- The bill is originally not specified, and is discounted by not specified, bringing the final amount to 21888."#;
+        let request = RequestBuilder::new()
+            .add_message(
+                TextMessageRole::User,
+                format!(include_str!("../prompt/note_taking.md"), description),
+            )
+            .set_constraint(Constraint::Lark(
+                include_str!("../constraint/note_taking.lark").to_string(),
+            ));
+        let mut stream = lm.stream_chat_request(request).await.unwrap();
+        while let Some(res) = stream.next().await {
+            match res.as_result() {
+                Ok(ResponseOk::Chunk(chunk)) => {
+                    if let Some(text) = &chunk.choices[0].delta.content {
+                        println!("{text}");
+                    }
+                }
+                Err(err) => log::error!("model error: {}", err),
+                _ => {
+                    log::error!("unhandled response");
+                }
+            }
+        }
+    }
+}
