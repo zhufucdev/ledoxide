@@ -2,3 +2,11 @@ Summarize text to provide an distinct identity of the purchase, such as name, ty
 <text>
 {0}
 </text>
+
+Mandatory response format:
+```
+Reasoning:
+[multiline text]
+Notes:
+[single line text]
+```

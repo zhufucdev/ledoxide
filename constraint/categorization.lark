@@ -1,4 +1,4 @@
-start: "Reasoning:\n" text+ "\nCategory:" name
+start: "Reasoning:\n" text+ "\nCategory: " name
 
 text: /./ | "\n"
 name: /{0}/
