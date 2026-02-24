@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.4
 
 # ─── Build Stage ─────────────────────────────────────────────────────────────
-FROM nvidia/cuda:13.1.1-cudnn-devel-ubuntu24.04 AS builder
+FROM nvidia/cuda:12.2.2-devel-ubuntu22.04 AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -42,7 +42,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     find target/release -maxdepth 1 -type f -executable -exec cp {} /app/binary \;
 
 # ─── Runtime Stage ────────────────────────────────────────────────────────────
-FROM nvidia/cuda:13.1.1-runtime-ubuntu24.04
+FROM nvidia/cuda:12.2.2-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 # Should mount at runtime
@@ -58,6 +58,6 @@ COPY --from=builder /app/binary /usr/local/bin/app
 
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=all
-ENV LD_LIBRARY_PATH=/usr/local/cuda-13.1/targets/x86_64-linux/lib:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}
+ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}
 
 ENTRYPOINT ["/usr/local/bin/app"]
