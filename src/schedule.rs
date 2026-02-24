@@ -214,7 +214,7 @@ impl Default for Scheduler {
                     .await
             }),
             ModelBuilder::new(async || {
-                TextModelBuilder::new("Qwen/Qwen3-4B-Instruct-2507")
+                TextModelBuilder::new("Qwen/Qwen3-4B-Instruct-2507-FP8")
                     .with_logging()
                     .build()
                     .await
