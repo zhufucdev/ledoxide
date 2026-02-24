@@ -209,13 +209,11 @@ impl Default for Scheduler {
             ModelBuilder::new(async || {
                 VisionModelBuilder::new("Qwen/Qwen3-VL-4B-Instruct-FP8")
                     .with_paged_attn(|| PagedAttentionMetaBuilder::default().build())?
-                    .with_logging()
                     .build()
                     .await
             }),
             ModelBuilder::new(async || {
                 TextModelBuilder::new("Qwen/Qwen3-4B-Instruct-2507-FP8")
-                    .with_logging()
                     .build()
                     .await
             }),
