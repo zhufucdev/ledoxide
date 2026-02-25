@@ -208,8 +208,8 @@ impl Default for Scheduler {
             4,
             468_000, // approx. 50 megabytes
             Duration::from_mins(5),
-            ModelProducer::new(default_lm_model),
             ModelProducer::new(default_vlm_model),
+            ModelProducer::new(default_lm_model),
         )
     }
 }
