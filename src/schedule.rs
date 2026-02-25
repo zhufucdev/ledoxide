@@ -10,7 +10,7 @@ use anyhow::anyhow;
 use async_stream::try_stream;
 use futures::{Stream, StreamExt, TryStreamExt, stream};
 use mistralrs::{
-    Model, ModelBuilder, ModelDType, PagedAttentionMetaBuilder, TextModelBuilder,
+    IsqBits, Model, ModelBuilder, ModelDType, PagedAttentionMetaBuilder, TextModelBuilder,
     VisionModelBuilder,
 };
 use tempfile::tempfile;
@@ -216,13 +216,15 @@ impl Default for Scheduler {
 
 pub async fn default_lm_model() -> anyhow::Result<Model> {
     TextModelBuilder::new("ibm-granite/granite-4.0-micro")
+        .with_auto_isq(IsqBits::Eight)
         .build()
         .await
 }
 
 pub async fn default_vlm_model() -> anyhow::Result<Model> {
-    ModelBuilder::new("Qwen/Qwen3-VL-4B-Instruct-FP8")
+    ModelBuilder::new("google/gemma-3-4b-it")
         .with_paged_attn(PagedAttentionMetaBuilder::default().build()?)
+        .with_auto_isq(IsqBits::Four)
         .build()
         .await
 }
