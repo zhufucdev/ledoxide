@@ -214,6 +214,7 @@ impl Default for Scheduler {
     }
 }
 
+#[cfg(feature = "quantize")]
 pub async fn default_lm_model() -> anyhow::Result<Model> {
     TextModelBuilder::new("ibm-granite/granite-4.0-micro")
         .with_auto_isq(IsqBits::Eight)
@@ -221,10 +222,24 @@ pub async fn default_lm_model() -> anyhow::Result<Model> {
         .await
 }
 
+pub async fn default_lm_model() -> anyhow::Result<Model> {
+    TextModelBuilder::new("ibm-granite/granite-4.0-micro")
+        .build()
+        .await
+}
+
+#[cfg(feature = "quantize")]
 pub async fn default_vlm_model() -> anyhow::Result<Model> {
     ModelBuilder::new("google/gemma-3-4b-it")
         .with_paged_attn(PagedAttentionMetaBuilder::default().build()?)
         .with_auto_isq(IsqBits::Four)
+        .build()
+        .await
+}
+
+pub async fn default_vlm_model() -> anyhow::Result<Model> {
+    ModelBuilder::new("google/gemma-3-4b-it")
+        .with_paged_attn(PagedAttentionMetaBuilder::default().build()?)
         .build()
         .await
 }
