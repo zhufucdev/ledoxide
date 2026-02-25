@@ -70,8 +70,10 @@ impl IntoResponse for CreateTaskError {
 
 #[derive(Debug, Display)]
 pub enum RunTaskError {
+    #[strum(to_string = "{0}")]
+    Generic(anyhow::Error),
     #[strum(to_string = "mistralrs: {0}")]
-    Mistral(anyhow::Error),
+    Mistral(mistralrs::error::Error),
     #[strum(to_string = "empty amount, model responded with: {0}")]
     EmptyAmount(String),
     #[strum(to_string = "invalid image in request: {0}")]
@@ -80,6 +82,12 @@ pub enum RunTaskError {
 
 impl From<anyhow::Error> for RunTaskError {
     fn from(value: anyhow::Error) -> Self {
+        Self::Generic(value)
+    }
+}
+
+impl From<mistralrs::error::Error> for RunTaskError {
+    fn from(value: mistralrs::error::Error) -> Self {
         Self::Mistral(value)
     }
 }

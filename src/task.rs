@@ -47,8 +47,7 @@ impl TaskDescriptor {
             TextMessageRole::User,
             format!(include_str!("../prompt/description.md")),
             vec![image::load_from_memory(self.image_buf.as_ref())?],
-            &vlm,
-        )?;
+        );
         if let Some(sampling) = &self.vlm_sampling {
             request = request.set_sampling(sampling.clone());
         }
@@ -257,7 +256,7 @@ impl<'de> Deserialize<'de> for State {
         match s.as_str() {
             "pending" => Ok(State::Pending),
             "running" => Ok(State::Running),
-            "finished" => Ok(State::Finished(Err(Arc::new(RunTaskError::Mistral(
+            "finished" => Ok(State::Finished(Err(Arc::new(RunTaskError::Generic(
                 anyhow::anyhow!("deserialized finished state without result"),
             ))))),
             _ => Err(serde::de::Error::custom(format!("unknown state: {}", s))),
@@ -310,7 +309,7 @@ impl<'de> Deserialize<'de> for TaskControlBlock {
                 if let Some(success) = data.success {
                     State::Finished(Ok(success))
                 } else if let Some(error) = data.error {
-                    State::Finished(Err(Arc::new(RunTaskError::Mistral(anyhow::anyhow!(error)))))
+                    State::Finished(Err(Arc::new(RunTaskError::Generic(anyhow::anyhow!(error)))))
                 } else {
                     return Err(serde::de::Error::custom(
                         "finished state without success or error",
@@ -333,55 +332,54 @@ impl<'de> Deserialize<'de> for TaskControlBlock {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, time::Duration};
+    use std::{collections::HashMap, io::Write, path::PathBuf, str::FromStr, time::Duration};
 
-    use mistralrs::{IsqType, PagedAttentionMetaBuilder, ResponseOk, TextModelBuilder};
+    use mistralrs::{
+        ChatCompletionChunkResponse, ChunkChoice, Delta, IsqType, ModelBuilder,
+        PagedAttentionMetaBuilder, Response, ResponseOk, TextModelBuilder,
+    };
+    use tokio::fs;
 
-    use crate::models::ModelBuilder;
+    use crate::schedule;
 
     use super::*;
 
     #[tokio::test]
-    async fn test_qwen() {
+    async fn test_lm() {
         pretty_env_logger::init();
-        let model_manager = ModelManager::new(
-            Duration::from_mins(5),
-            HashMap::from([(
-                "lm".to_string(),
-                ModelBuilder::new(async || {
-                    TextModelBuilder::new("Qwen/Qwen3-4B")
-                        .with_paged_attn(|| PagedAttentionMetaBuilder::default().build())?
-                        .build()
-                        .await
-                }),
-            )]),
-        );
-        let lm = model_manager.get_model("lm").await.unwrap().unwrap();
+        let lm = schedule::default_lm_model().await.unwrap();
+        log::debug!("model building finished");
         let description = r#"description: - In the top bar, there is no header text, indicating this image is a screenshot of a social media post or listing, telling the user an incoming sale of a vivo X200 Ultra smartphone.
 - For main content, there are several items, including a collage of nine images showing the vivo X200 Ultra from various angles (back, side, front, and held in hand), with text overlays identifying the model and featuring the Zeiss logo, and a final image showing the phone's screen displaying a sales page with Chinese text.
 - For bottom section, there is a text block in pink font indicating the item is for sale with hashtags, contact information (T.), price (21888), and a description of the phone's condition (16+512GB, suspected replacement screen with a minor gap, but all functions normal, with official warranty still valid for over a month).
 - The bill is originally not specified, and is discounted by not specified, bringing the final amount to 21888."#;
         let request = RequestBuilder::new()
+            .set_constraint(Constraint::Lark(
+                include_str!("../constraint/note_taking.lark").to_string(),
+            ))
             .add_message(
                 TextMessageRole::User,
                 format!(include_str!("../prompt/note_taking.md"), description),
-            )
-            .set_constraint(Constraint::Lark(
-                include_str!("../constraint/note_taking.lark").to_string(),
-            ));
-        let mut stream = lm.stream_chat_request(request).await.unwrap();
-        while let Some(res) = stream.next().await {
-            match res.as_result() {
-                Ok(ResponseOk::Chunk(chunk)) => {
-                    if let Some(text) = &chunk.choices[0].delta.content {
-                        println!("{text}");
-                    }
-                }
-                Err(err) => log::error!("model error: {}", err),
-                _ => {
-                    log::error!("unhandled response");
-                }
-            }
-        }
+            );
+        let response = lm.send_chat_request(request).await.unwrap();
+        println!("{}", response.choices[0].message.content.clone().unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_vlm() {
+        pretty_env_logger::init();
+        let screenshot_path = PathBuf::from_str(env!("CARGO_MANIFEST_DIR"))
+            .unwrap()
+            .join("asset/second-hand-horse-screenshot.jpeg");
+        let screenshot_content = fs::read(screenshot_path).await.unwrap();
+        let request = RequestBuilder::new().add_image_message(
+            TextMessageRole::User,
+            format!(include_str!("../prompt/description.md")),
+            vec![image::load_from_memory(&screenshot_content).unwrap()],
+        );
+        let vlm = schedule::default_vlm_model().await.unwrap();
+        log::debug!("model building finished");
+        let response = vlm.send_chat_request(request).await.unwrap();
+        println!("{}", response.choices[0].message.content.clone().unwrap());
     }
 }

@@ -7,18 +7,18 @@ use tokio::{
     task::JoinHandle,
 };
 
-pub struct ModelBuilder(Box<dyn Fn() -> BoxFuture<'static, anyhow::Result<Model>> + Send + Sync>);
+pub struct ModelProducer(Box<dyn Fn() -> BoxFuture<'static, anyhow::Result<Model>> + Send + Sync>);
 
 /// unloads the model when not in use
 pub struct ModelManager {
     timeout: Duration,
     cache: Arc<RwLock<HashMap<String, Arc<Model>>>>,
     timeout_jobs: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
-    model_builders: Arc<RwLock<HashMap<String, ModelBuilder>>>,
+    model_builders: Arc<RwLock<HashMap<String, ModelProducer>>>,
 }
 
 impl ModelManager {
-    pub fn new(timeout: Duration, model_builders: HashMap<String, ModelBuilder>) -> Self {
+    pub fn new(timeout: Duration, model_builders: HashMap<String, ModelProducer>) -> Self {
         Self {
             timeout,
             cache: Arc::new(RwLock::new(HashMap::with_capacity(model_builders.len()))),
@@ -68,7 +68,7 @@ impl ModelManager {
     }
 }
 
-impl ModelBuilder {
+impl ModelProducer {
     pub fn new<F, Fut>(f: F) -> Self
     where
         F: Fn() -> Fut + Send + Sync + 'static,

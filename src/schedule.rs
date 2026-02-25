@@ -1,7 +1,8 @@
 use std::{
     collections::HashMap,
     io::{self, SeekFrom},
-    sync::Arc,
+    ops::Deref,
+    sync::{Arc, LazyLock},
     time::Duration,
 };
 
@@ -9,7 +10,8 @@ use anyhow::anyhow;
 use async_stream::try_stream;
 use futures::{Stream, StreamExt, TryStreamExt, stream};
 use mistralrs::{
-    GgufModelBuilder, ModelDType, PagedAttentionMetaBuilder, TextModelBuilder, VisionModelBuilder,
+    Model, ModelBuilder, ModelDType, PagedAttentionMetaBuilder, TextModelBuilder,
+    VisionModelBuilder,
 };
 use tempfile::tempfile;
 use tokio::{
@@ -21,7 +23,7 @@ use tokio::{
 };
 
 use crate::{
-    models::{ModelBuilder, ModelManager},
+    models::{ModelManager, ModelProducer},
     task::{self, TaskControlBlock, TaskDescriptor},
 };
 
@@ -44,8 +46,8 @@ impl Scheduler {
         max_concurrency: usize,
         max_memory_size: usize,
         model_timeout: Duration,
-        vlm_builder: ModelBuilder,
-        lm_builder: ModelBuilder,
+        vlm_builder: ModelProducer,
+        lm_builder: ModelProducer,
     ) -> Self {
         Self {
             queues: Default::default(),
@@ -206,19 +208,23 @@ impl Default for Scheduler {
             4,
             468_000, // approx. 50 megabytes
             Duration::from_mins(5),
-            ModelBuilder::new(async || {
-                VisionModelBuilder::new("Qwen/Qwen3-VL-4B-Instruct-FP8")
-                    .with_paged_attn(|| PagedAttentionMetaBuilder::default().build())?
-                    .build()
-                    .await
-            }),
-            ModelBuilder::new(async || {
-                TextModelBuilder::new("Qwen/Qwen3-4B-Instruct-2507-FP8")
-                    .build()
-                    .await
-            }),
+            ModelProducer::new(default_lm_model),
+            ModelProducer::new(default_vlm_model),
         )
     }
+}
+
+pub async fn default_lm_model() -> anyhow::Result<Model> {
+    TextModelBuilder::new("ibm-granite/granite-4.0-micro")
+        .build()
+        .await
+}
+
+pub async fn default_vlm_model() -> anyhow::Result<Model> {
+    ModelBuilder::new("Qwen/Qwen3-VL-4B-Instruct-FP8")
+        .with_paged_attn(PagedAttentionMetaBuilder::default().build()?)
+        .build()
+        .await
 }
 
 impl Default for ScheduleQueues {
