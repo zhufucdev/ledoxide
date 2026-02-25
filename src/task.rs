@@ -362,7 +362,7 @@ mod tests {
                 format!(include_str!("../prompt/note_taking.md"), description),
             );
         let response = lm.send_chat_request(request).await.unwrap();
-        println!("{}", response.choices[0].message.content.clone().unwrap());
+        log::info!(target: "lm", "{}", response.choices[0].message.content.clone().unwrap());
     }
 
     #[tokio::test]
@@ -380,6 +380,6 @@ mod tests {
         let vlm = schedule::default_vlm_model().await.unwrap();
         log::debug!("model building finished");
         let response = vlm.send_chat_request(request).await.unwrap();
-        println!("{}", response.choices[0].message.content.clone().unwrap());
+        log::info!(target: "vlm", "{}", response.choices[0].message.content.clone().unwrap());
     }
 }

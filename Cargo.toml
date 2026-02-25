@@ -33,4 +33,5 @@ tower = { version = "0.5.3", features = ["util"] }
 cuda = ["mistralrs/cuda"]
 metal = ["mistralrs/metal"]
 accelerate = ["mistralrs/accelerate"]
+flash-attn = ["mistralrs/flash-attn"]
 quantize = []
