@@ -222,6 +222,7 @@ pub async fn default_lm_model() -> anyhow::Result<Model> {
         .await
 }
 
+#[cfg(not(feature = "quantize"))]
 pub async fn default_lm_model() -> anyhow::Result<Model> {
     TextModelBuilder::new("ibm-granite/granite-4.0-micro")
         .build()
@@ -237,6 +238,7 @@ pub async fn default_vlm_model() -> anyhow::Result<Model> {
         .await
 }
 
+#[cfg(not(feature = "quantize"))]
 pub async fn default_vlm_model() -> anyhow::Result<Model> {
     ModelBuilder::new("google/gemma-3-4b-it")
         .with_paged_attn(PagedAttentionMetaBuilder::default().build()?)
