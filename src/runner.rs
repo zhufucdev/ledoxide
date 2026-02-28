@@ -104,22 +104,23 @@ pub struct Gemma3Runner {
 static LLAMA_BACKEND: LazyLock<LlamaBackend> = LazyLock::new(|| LlamaBackend::init().unwrap());
 
 impl Gemma3Runner {
-    pub async fn new() -> Result<Self, CreateLlamaCppRunnerError> {
+    pub async fn new(
+        model_id: impl ToString,
+        model_file: impl AsRef<str>,
+        multimodel_file: impl AsRef<str>,
+    ) -> Result<Self, CreateLlamaCppRunnerError> {
         let repo = ApiBuilder::new()
             .with_progress(std::io::stdin().is_terminal())
             .build()?
-            .model("google/gemma-3-4b-it-qat-q4_0-gguf".to_string());
+            .model(model_id.to_string());
         let model = LlamaModel::load_from_file(
             &LLAMA_BACKEND,
-            repo.get("gemma-3-4b-it-q4_0.gguf").await?,
+            repo.get(model_file.as_ref()).await?,
             &Default::default(),
         )?;
 
         let mtmd_ctx = MtmdContext::init_from_file(
-            repo.get("mmproj-model-f16-4B.gguf")
-                .await?
-                .to_str()
-                .unwrap(),
+            repo.get(multimodel_file.as_ref()).await?.to_str().unwrap(),
             &model,
             &Default::default(),
         )?;
@@ -132,6 +133,14 @@ impl Gemma3Runner {
             chat_template,
             ctx_size: 10240u32.try_into().unwrap(),
         })
+    }
+    pub async fn default() -> Result<Self, CreateLlamaCppRunnerError> {
+        Self::new(
+            "google/gemma-3-4b-it-qat-q4_0-gguf",
+            "gemma-3-4b-it-q4_0.gguf",
+            "mmproj-model-f16-4B.gguf",
+        )
+        .await
     }
 }
 

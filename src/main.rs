@@ -15,8 +15,8 @@ use crate::{
     task::{TaskControlBlock, TaskDescriptor},
 };
 
+mod args;
 mod bill;
-mod cli;
 mod error;
 mod key;
 mod models;
@@ -29,32 +29,23 @@ mod task;
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
     pretty_env_logger::init();
-    let args = cli::Args::parse();
-    Category::load_from_names(args.categories);
-    let auth_key = match args.auth_key {
-        Some(key) => key,
-        None => match std::env::var("AUTH_KEY") {
-            Ok(key) => key,
-            Err(_) => {
-                let random_key = key::generate_random_key();
-                log::error!("missing authorization key, using a random one: {random_key}");
-                random_key
-            }
-        },
-    };
+    let cli = args::Cli::parse();
+    Category::load_from_names(&cli.categories);
+    let bind_addr = cli.bind.clone();
+    let args: args::App = cli.into();
 
-    let app = app(auth_key);
-    let listener = TcpListener::bind(args.bind).await.expect("failed to bind");
+    let app = app(&args);
+    let listener = TcpListener::bind(bind_addr).await.expect("failed to bind");
     log::info!("Listening on http://{}", listener.local_addr().unwrap());
     axum::serve(listener, app).await.unwrap();
 }
 
-fn app(auth_key: impl ToString) -> axum::Router {
+fn app(args: &args::App) -> axum::Router {
     axum::Router::new()
         .route("/", get(index))
         .route("/create_task", post(create_task))
         .route("/get_task/{task_id}", get(get_task))
-        .with_state(AppState::new(auth_key.to_string()))
+        .with_state(AppState::new(args))
 }
 
 async fn index() -> &'static str {
@@ -93,7 +84,7 @@ mod tests {
     use std::{path::PathBuf, str::FromStr, time::Duration};
 
     use axum::{body::Body, extract::Request};
-    use futures::{TryFutureExt, TryStreamExt};
+    use futures::TryStreamExt;
     use reqwest::{StatusCode, multipart::Form};
     use tower::{Service, util::ServiceExt};
 
@@ -115,7 +106,7 @@ mod tests {
             )
         }
 
-        let mut app = app(auth_key).into_service();
+        let mut app = app(&args::App::default()).into_service();
         let screenshot_path = PathBuf::from_str(env!("CARGO_MANIFEST_DIR"))
             .unwrap()
             .join("asset/second-hand-horse-screenshot.jpeg");

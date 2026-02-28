@@ -16,11 +16,14 @@ impl FromRequestParts<AppState> for ValidKey {
         parts: &mut axum::http::request::Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
+        const VALID_KEY: ValidKey = ValidKey {};
+        if state.auth_key().is_empty() {
+            return Ok(VALID_KEY);
+        }
         let TypedHeader(Authorization(bearer)) = parts
             .extract::<TypedHeader<Authorization<Bearer>>>()
             .await?;
         if bearer.token() == state.auth_key() {
-            const VALID_KEY: ValidKey = ValidKey {};
             Ok(VALID_KEY)
         } else {
             Err(error::AuthError::InvalidKey)

@@ -218,7 +218,21 @@ pub async fn default_lm_model() -> anyhow::Result<Model> {
 }
 
 pub async fn default_vlm_model() -> anyhow::Result<Model> {
-    Model::new().await.map_err(|err| anyhow::anyhow!(err))
+    Model::default().await.map_err(|err| anyhow::anyhow!(err))
+}
+
+pub async fn large_lm_model() -> anyhow::Result<Model> {
+    large_vlm_model().await
+}
+
+pub async fn large_vlm_model() -> anyhow::Result<Model> {
+    Model::new(
+        "google/gemma-3-12b-it-qat-q4_0-gguf",
+        "gemma-3-12b-it-q4_0.gguf",
+        "mmproj-model-f16-12B.gguf",
+    )
+    .await
+    .map_err(|err| anyhow::anyhow!(err))
 }
 
 impl Default for ScheduleQueues {

@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     ca-certificates \
     python3 \
+    clang \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Rust via rustup
