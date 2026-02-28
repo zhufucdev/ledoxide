@@ -1,6 +1,6 @@
 steps:
   - name: "gcr.io/cloud-builders/docker"
-    args: ["build", "-t", "gcr.io/${PROJECT_ID}/ledoxide:latest", "."]
+    args: ["build", "-t", "gcr.io/${PROJECT_ID}/ledoxide:latest", "--cache-from", "gcr.io/${PROJECT_ID}/ledoxide:latest", "."]
     env:
       - "DOCKER_BUILDKIT=1"
 images:
