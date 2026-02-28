@@ -111,6 +111,7 @@ impl Gemma3Runner {
     ) -> Result<Self, CreateLlamaCppRunnerError> {
         let repo = ApiBuilder::new()
             .with_progress(std::io::stdin().is_terminal())
+            .with_token(std::env::var("HF_TOKEN").ok())
             .build()?
             .model(model_id.to_string());
         let model = LlamaModel::load_from_file(
@@ -243,11 +244,10 @@ impl<'a> GemmaStream<'a> {
         log::debug!(target: "gemma", "preprocessed messages: {messages:?}");
 
         // Aggregate images
-        let chat_template = self.runner.model.chat_template(None)?;
         let formatted_prompt =
             self.runner
                 .model
-                .apply_chat_template(&chat_template, &messages, true)?;
+                .apply_chat_template(&self.runner.chat_template, &messages, true)?;
         let bitmaps = self
             .req
             .messages
