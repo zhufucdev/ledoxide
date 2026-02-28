@@ -94,7 +94,7 @@ pub enum ImageOrText {
     Image(image::DynamicImage),
 }
 
-pub struct Gemma4bRunner {
+pub struct Gemma3Runner {
     model: LlamaModel,
     chat_template: LlamaChatTemplate,
     mtmd_ctx: MtmdContext,
@@ -103,7 +103,7 @@ pub struct Gemma4bRunner {
 
 static LLAMA_BACKEND: LazyLock<LlamaBackend> = LazyLock::new(|| LlamaBackend::init().unwrap());
 
-impl Gemma4bRunner {
+impl Gemma3Runner {
     pub async fn new() -> Result<Self, CreateLlamaCppRunnerError> {
         let repo = ApiBuilder::new()
             .with_progress(std::io::stdin().is_terminal())
@@ -135,7 +135,7 @@ impl Gemma4bRunner {
     }
 }
 
-impl Gemma4bRunner {
+impl Gemma3Runner {
     fn new_context_window(&self) -> Result<LlamaContext<'_>, LlamaContextLoadError> {
         self.model.new_context(
             &LLAMA_BACKEND,
@@ -144,7 +144,7 @@ impl Gemma4bRunner {
     }
 }
 
-impl<'a> TextLmRunner<'a> for Gemma4bRunner {
+impl<'a> TextLmRunner<'a> for Gemma3Runner {
     type Response = GemmaStream<'a>;
 
     fn stream_lm_response(&'a self, request: TextLmRequest) -> Self::Response {
@@ -156,7 +156,7 @@ impl<'a> TextLmRunner<'a> for Gemma4bRunner {
     }
 }
 
-impl<'a> VisionLmRunner<'a> for Gemma4bRunner {
+impl<'a> VisionLmRunner<'a> for Gemma3Runner {
     type Response = GemmaStream<'a>;
 
     fn stream_vlm_response(&'a self, request: VisionLmRequest) -> Self::Response {
@@ -186,7 +186,7 @@ pub struct GemmaStream<'a> {
     ctx_source: Option<Result<LlamaContext<'a>, RunnerError>>,
     ctx: Option<LlamaContext<'a>>,
     req: VisionLmRequest,
-    runner: &'a Gemma4bRunner,
+    runner: &'a Gemma3Runner,
     runtime: Option<Runtime<'a>>,
     done: bool,
 }
@@ -370,7 +370,7 @@ impl<'a> GemmaStream<'a> {
     fn new(
         source: Result<LlamaContext<'a>, RunnerError>,
         req: VisionLmRequest,
-        runner: &'a Gemma4bRunner,
+        runner: &'a Gemma3Runner,
     ) -> Self {
         Self {
             ctx_source: Some(source),

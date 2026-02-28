@@ -21,7 +21,7 @@ use tokio::{
 use crate::models::Model;
 use crate::{
     models::{ModelManager, ModelProducer},
-    runner::Gemma4bRunner,
+    runner::Gemma3Runner,
     task::{self, TaskControlBlock, TaskDescriptor},
 };
 
@@ -213,27 +213,12 @@ impl Default for Scheduler {
     }
 }
 
-#[cfg(feature = "quantize")]
 pub async fn default_lm_model() -> anyhow::Result<Model> {
     default_vlm_model().await
 }
 
-pub async fn default_lm_model() -> anyhow::Result<Model> {
-    default_vlm_model().await
-}
-
-#[cfg(feature = "quantize")]
 pub async fn default_vlm_model() -> anyhow::Result<Model> {
-    Gemma4bRunnerInner::new()
-        .await
-        .map_err(|err| anyhow::anyhow!(err))
-}
-
-#[cfg(not(feature = "quantize"))]
-pub async fn default_vlm_model() -> anyhow::Result<Model> {
-    Gemma4bRunner::new()
-        .await
-        .map_err(|err| anyhow::anyhow!(err))
+    Model::new().await.map_err(|err| anyhow::anyhow!(err))
 }
 
 impl Default for ScheduleQueues {

@@ -6,9 +6,9 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::runner::Gemma4bRunner;
+use crate::runner::Gemma3Runner;
 
-pub type Model = Gemma4bRunner;
+pub type Model = Gemma3Runner;
 
 pub struct ModelProducer(
     Box<dyn Fn() -> BoxFuture<'static, anyhow::Result<Model>> + Send + Sync>,

@@ -36,4 +36,3 @@ tower = { version = "0.5.3", features = ["util"] }
 [features]
 cuda = ["llama-cpp-2/cuda"]
 metal = ["llama-cpp-2/metal"]
-quantize = []
