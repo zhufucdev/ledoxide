@@ -1,4 +1,4 @@
-use std::{io::IsTerminal, num::NonZeroU32, sync::LazyLock, usize};
+use std::{io::IsTerminal, num::NonZeroU32, path::PathBuf, str::FromStr, sync::LazyLock, usize};
 
 use encoding_rs::{Decoder, UTF_8};
 use hf_hub::api::tokio::ApiBuilder;
@@ -114,6 +114,11 @@ impl Gemma3Runner {
             .with_token(std::env::var("HF_TOKEN").ok());
         if let Ok(endpoint) = std::env::var("HF_ENDPOINT") {
             repo = repo.with_endpoint(endpoint);
+        }
+        if let Ok(cache) = std::env::var("HF_HOME") {
+            repo = repo.with_cache_dir(
+                PathBuf::from_str(&cache).expect("HF_HOME env var is not a valid path"),
+            );
         }
         let repo = repo.build()?.model(model_id.to_string());
         let model = LlamaModel::load_from_file(
