@@ -85,6 +85,14 @@ impl TaskDescriptor {
 
         let notes = model.get_lm_response(request).await?;
         log::debug!(target: "task runner", "notes: {}", notes);
+        let notes = notes
+            .rsplit_once("\n")
+            .unwrap()
+            .1
+            .split_once(": ")
+            .unwrap()
+            .1
+            .to_string();
         let mut request = TextLmRequest {
             messages: vec![(
                 MessageRole::User,
