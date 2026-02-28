@@ -109,11 +109,13 @@ impl Gemma3Runner {
         model_file: impl AsRef<str>,
         multimodel_file: impl AsRef<str>,
     ) -> Result<Self, CreateLlamaCppRunnerError> {
-        let repo = ApiBuilder::new()
+        let mut repo = ApiBuilder::new()
             .with_progress(std::io::stdin().is_terminal())
-            .with_token(std::env::var("HF_TOKEN").ok())
-            .build()?
-            .model(model_id.to_string());
+            .with_token(std::env::var("HF_TOKEN").ok());
+        if let Ok(endpoint) = std::env::var("HF_ENDPOINT") {
+            repo = repo.with_endpoint(endpoint);
+        }
+        let repo = repo.build()?.model(model_id.to_string());
         let model = LlamaModel::load_from_file(
             &LLAMA_BACKEND,
             repo.get(model_file.as_ref()).await?,
