@@ -130,12 +130,12 @@ impl IntoResponse for GetTaskError {
 
 #[derive(Debug, Error)]
 pub enum CreateLlamaCppRunnerError {
-    #[error("hf hub")]
+    #[error("hf hub: {0}")]
     HfHub(#[from] hf_hub::api::tokio::ApiError),
-    #[error("load model")]
+    #[error("load model: {0}")]
     LoadModel(#[from] LlamaModelLoadError),
-    #[error("load mtmd")]
+    #[error("load mtmd: {0}")]
     LoadMtmd(#[from] MtmdInitError),
-    #[error("load chat template")]
+    #[error("load chat template: {0}")]
     LoadChatTemplate(#[from] ChatTemplateError),
 }
