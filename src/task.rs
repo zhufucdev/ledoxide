@@ -4,7 +4,6 @@ use axum::{
     RequestExt,
     extract::{FromRequest, Multipart},
 };
-use mistralrs::{Constraint, RequestBuilder, SamplingParams, TextMessageRole};
 use regex::Regex;
 use serde::{Deserialize, Serialize, ser::SerializeStruct};
 use strum::Display;
@@ -14,13 +13,18 @@ use crate::{
     error::{CreateTaskError, RunTaskError},
     key,
     models::ModelManager,
+    runner::{
+        ImageOrText, MessageRole, TextLmRequest, TextLmRunnerExt, VisionLmRequest,
+        VisionLmRunnerExt,
+    },
+    sample::{LlguidanceSamplingParams, LlguidanceSchema, SimpleSamplingParams},
 };
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TaskDescriptor {
     image_buf: Vec<u8>,
-    lm_sampling: Option<SamplingParams>,
-    vlm_sampling: Option<SamplingParams>,
+    lm_sampling: Option<SimpleSamplingParams>,
+    vlm_sampling: Option<SimpleSamplingParams>,
 }
 
 impl TaskDescriptor {
@@ -28,11 +32,11 @@ impl TaskDescriptor {
         &self.image_buf
     }
 
-    pub fn lm_sampling(&self) -> Option<SamplingParams> {
+    pub fn lm_sampling(&self) -> Option<SimpleSamplingParams> {
         self.lm_sampling.clone()
     }
 
-    pub fn vlm_sampling(&self) -> Option<SamplingParams> {
+    pub fn vlm_sampling(&self) -> Option<SimpleSamplingParams> {
         self.vlm_sampling.clone()
     }
 
@@ -42,75 +46,79 @@ impl TaskDescriptor {
         vlm_id: impl AsRef<str>,
         lm_id: impl AsRef<str>,
     ) -> Result<Bill, RunTaskError> {
-        let vlm = model_manager.get_model(vlm_id.as_ref()).await?.unwrap();
-        let mut request = RequestBuilder::new().add_image_message(
-            TextMessageRole::User,
-            format!(include_str!("../prompt/description.md")),
-            vec![image::load_from_memory(self.image_buf.as_ref())?],
-        );
+        let model = model_manager.get_model(vlm_id.as_ref()).await?.unwrap();
+        let mut request = VisionLmRequest {
+            messages: vec![
+                (
+                    MessageRole::User,
+                    ImageOrText::Text(format!(include_str!("../prompt/description.md"))),
+                ),
+                (
+                    MessageRole::User,
+                    ImageOrText::Image(image::load_from_memory(self.image_buf.as_ref())?),
+                ),
+            ],
+            ..Default::default()
+        };
         if let Some(sampling) = &self.vlm_sampling {
-            request = request.set_sampling(sampling.clone());
+            request.sampling = sampling.clone();
         }
-        let response = vlm.send_chat_request(request).await?;
-        let description = response.choices[0].message.content.clone().unwrap();
-        drop(vlm);
+        let description = model.get_vlm_response(request).await?;
+        drop(model);
         log::debug!(target: "task runner", "description: {}", description);
 
-        let lm = model_manager.get_model(lm_id.as_ref()).await?.unwrap();
-        let mut request = RequestBuilder::new()
-            .set_constraint(Constraint::Lark(
-                include_str!("../constraint/note_taking.lark").to_string(),
-            ))
-            .add_message(
-                TextMessageRole::User,
+        let model = model_manager.get_model(lm_id.as_ref()).await?.unwrap();
+        let mut request = TextLmRequest {
+            messages: vec![(
+                MessageRole::User,
                 format!(include_str!("../prompt/note_taking.md"), description),
-            );
+            )],
+            llguidance: Some(LlguidanceSamplingParams {
+                schema: LlguidanceSchema::Lark,
+                data: include_str!("../constraint/note_taking.lark").to_string(),
+            }),
+            ..Default::default()
+        };
         if let Some(sampling) = &self.lm_sampling {
-            request = request.set_sampling(sampling.clone());
+            request.sampling = sampling.clone();
         }
 
-        let response = lm.send_chat_request(request).await?;
-        let notes = response.choices[0].message.content.clone().unwrap();
+        let notes = model.get_lm_response(request).await?;
         log::debug!(target: "task runner", "notes: {}", notes);
-        let mut request = RequestBuilder::new()
-            .add_message(
-                TextMessageRole::User,
+        let mut request = TextLmRequest {
+            messages: vec![(
+                MessageRole::User,
                 format!(
                     include_str!("../prompt/amount_extraction.md"),
                     notes, description
                 ),
-            )
-            .set_constraint(Constraint::Lark(
-                include_str!("../constraint/amount_extraction.lark").to_string(),
-            ));
-        if let Some(sampling) = &self.lm_sampling {
-            request = request.set_sampling(sampling.clone());
-        }
-        let response = lm.send_chat_request(request).await?;
-        log::debug!(target: "task runner", "amount: {}", response.choices[0].message.content.clone().unwrap());
-        let numeric = Regex::new(r#"([0-9,]+\.?[0-9]{0,})"#).unwrap();
-        let amount = numeric.captures(
-            response.choices[0]
-                .message
-                .content
-                .as_ref()
-                .unwrap()
-                .rsplit_once("\n")
-                .unwrap()
-                .1,
-        );
-        let amount: f32 = if let Some(amount) = amount {
-            amount.get(1).unwrap().as_str().parse().map_err(|_| {
-                RunTaskError::EmptyAmount(response.choices[0].message.content.clone().unwrap())
-            })?
-        } else {
-            return Err(RunTaskError::EmptyAmount(
-                response.choices[0].message.content.clone().unwrap(),
-            ));
+            )],
+            llguidance: Some(LlguidanceSamplingParams {
+                schema: LlguidanceSchema::Lark,
+                data: include_str!("../constraint/amount_extraction.lark").to_string(),
+            }),
+            ..Default::default()
         };
-        let mut request = RequestBuilder::new()
-            .add_message(
-                TextMessageRole::User,
+        if let Some(sampling) = &self.lm_sampling {
+            request.sampling = sampling.clone();
+        }
+        let response = model.get_lm_response(request).await?;
+        log::debug!(target: "task runner", "amount: {}", response);
+        let numeric = Regex::new(r#"([0-9,]+\.?[0-9]{0,})"#).unwrap();
+        let amount = numeric.captures(response.rsplit_once("\n").unwrap().1);
+        let amount: f32 = if let Some(amount) = amount {
+            amount
+                .get(1)
+                .unwrap()
+                .as_str()
+                .parse()
+                .map_err(|_| RunTaskError::EmptyAmount(response.clone()))?
+        } else {
+            return Err(RunTaskError::EmptyAmount(response));
+        };
+        let mut request = TextLmRequest {
+            messages: vec![(
+                MessageRole::User,
                 format!(
                     include_str!("../prompt/categorization.md"),
                     notes,
@@ -121,26 +129,25 @@ impl TaskDescriptor {
                         .collect::<Vec<_>>()
                         .join("\n")
                 ),
-            )
-            .set_constraint(Constraint::Lark(format!(
-                include_str!("../constraint/categorization.lark"),
-                Category::all_cases()
-                    .iter()
-                    .map(|c| c.name())
-                    .collect::<Vec<_>>()
-                    .join("|")
-            )));
+            )],
+            llguidance: Some(LlguidanceSamplingParams {
+                schema: LlguidanceSchema::Lark,
+                data: include_str!("../constraint/categorization.lark").to_string(),
+            }),
+            ..Default::default()
+        };
         if let Some(sampling) = &self.lm_sampling {
-            request = request.set_sampling(sampling.clone());
+            request.sampling = sampling.clone();
         }
-        let response = lm.send_chat_request(request).await?;
-        log::debug!(target: "task runner", "category: {}", response.choices[0].message.content.clone().unwrap());
-        let category = response.choices[0]
-            .message
-            .content
-            .as_ref()
-            .map(|msg| msg.rsplit_once("\n").unwrap().1.split_once(" ").unwrap().1)
-            .unwrap();
+        let response = model.get_lm_response(request).await?;
+        log::debug!(target: "task runner", "category: {}", response);
+        let category = response
+            .rsplit_once("\n")
+            .unwrap()
+            .1
+            .split_once(" ")
+            .unwrap()
+            .1;
 
         Ok(Bill {
             notes,
@@ -172,7 +179,8 @@ where
                     {
                         return Err(CreateTaskError::InvalidField(name.to_string()));
                     }
-                    let value: SamplingParams = serde_json::from_str(field.text().await?.as_str())?;
+                    let value: SimpleSamplingParams =
+                        serde_json::from_str(field.text().await?.as_str())?;
                     if name.starts_with("lm") {
                         lm_sampling = Some(value)
                     } else {
@@ -334,10 +342,6 @@ impl<'de> Deserialize<'de> for TaskControlBlock {
 mod tests {
     use std::{collections::HashMap, io::Write, path::PathBuf, str::FromStr, time::Duration};
 
-    use mistralrs::{
-        ChatCompletionChunkResponse, ChunkChoice, Delta, IsqType, ModelBuilder,
-        PagedAttentionMetaBuilder, Response, ResponseOk, TextModelBuilder,
-    };
     use tokio::fs;
 
     use crate::schedule;
@@ -353,16 +357,19 @@ mod tests {
 - For main content, there are several items, including a collage of nine images showing the vivo X200 Ultra from various angles (back, side, front, and held in hand), with text overlays identifying the model and featuring the Zeiss logo, and a final image showing the phone's screen displaying a sales page with Chinese text.
 - For bottom section, there is a text block in pink font indicating the item is for sale with hashtags, contact information (T.), price (21888), and a description of the phone's condition (16+512GB, suspected replacement screen with a minor gap, but all functions normal, with official warranty still valid for over a month).
 - The bill is originally not specified, and is discounted by not specified, bringing the final amount to 21888."#;
-        let request = RequestBuilder::new()
-            .set_constraint(Constraint::Lark(
-                include_str!("../constraint/note_taking.lark").to_string(),
-            ))
-            .add_message(
-                TextMessageRole::User,
+        let request = TextLmRequest {
+            messages: vec![(
+                MessageRole::User,
                 format!(include_str!("../prompt/note_taking.md"), description),
-            );
-        let response = lm.send_chat_request(request).await.unwrap();
-        log::info!(target: "lm", "{}", response.choices[0].message.content.clone().unwrap());
+            )],
+            llguidance: Some(LlguidanceSamplingParams {
+                schema: LlguidanceSchema::Lark,
+                data: include_str!("../constraint/note_taking.lark").to_string(),
+            }),
+            ..Default::default()
+        };
+        let response = lm.get_lm_response(request).await.unwrap();
+        log::info!(target: "lm", "{}", response);
     }
 
     #[tokio::test]
@@ -372,14 +379,24 @@ mod tests {
             .unwrap()
             .join("asset/second-hand-horse-screenshot.jpeg");
         let screenshot_content = fs::read(screenshot_path).await.unwrap();
-        let request = RequestBuilder::new().add_image_message(
-            TextMessageRole::User,
-            format!(include_str!("../prompt/description.md")),
-            vec![image::load_from_memory(&screenshot_content).unwrap()],
-        );
+        let request = VisionLmRequest {
+            messages: vec![
+                (
+                    MessageRole::User,
+                    ImageOrText::Text(format!(include_str!("../prompt/description.md"))),
+                ),
+                (
+                    MessageRole::User,
+                    ImageOrText::Image(
+                        image::load_from_memory(screenshot_content.as_ref()).unwrap(),
+                    ),
+                ),
+            ],
+            ..Default::default()
+        };
         let vlm = schedule::default_vlm_model().await.unwrap();
         log::debug!("model building finished");
-        let response = vlm.send_chat_request(request).await.unwrap();
-        log::info!(target: "vlm", "{}", response.choices[0].message.content.clone().unwrap());
+        let response = vlm.get_vlm_response(request).await.unwrap();
+        log::info!(target: "vlm", "{}", response);
     }
 }

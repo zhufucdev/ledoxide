@@ -9,10 +9,6 @@ use std::{
 use anyhow::anyhow;
 use async_stream::try_stream;
 use futures::{Stream, StreamExt, TryStreamExt, stream};
-use mistralrs::{
-    IsqBits, Model, ModelBuilder, ModelDType, PagedAttentionMetaBuilder, TextModelBuilder,
-    VisionModelBuilder,
-};
 use tempfile::tempfile;
 use tokio::{
     fs::File,
@@ -22,8 +18,11 @@ use tokio::{
     task::JoinHandle,
 };
 
+#[cfg(not(feature = "quantize"))]
+use crate::models::Model;
 use crate::{
     models::{ModelManager, ModelProducer},
+    runner::Gemma4bRunner,
     task::{self, TaskControlBlock, TaskDescriptor},
 };
 
@@ -94,8 +93,9 @@ impl Scheduler {
                 active_queue.push((
                     tcb.clone(),
                     tokio::spawn(async move {
+                        let job = descriptor.run(mm.as_ref(), "vlm", "lm").await;
                         tcb.set_state(task::State::Finished(
-                            match descriptor.run(mm.as_ref(), "vlm", "lm").await {
+                            match job {
                                 Ok(bill) => Ok(task::Success(bill)),
                                 Err(err) => Err(Arc::new(err)),
                             },
@@ -216,34 +216,25 @@ impl Default for Scheduler {
 
 #[cfg(feature = "quantize")]
 pub async fn default_lm_model() -> anyhow::Result<Model> {
-    TextModelBuilder::new("ibm-granite/granite-4.0-micro")
-        .with_auto_isq(IsqBits::Eight)
-        .build()
-        .await
+    default_vlm_model().await
 }
 
-#[cfg(not(feature = "quantize"))]
 pub async fn default_lm_model() -> anyhow::Result<Model> {
-    TextModelBuilder::new("ibm-granite/granite-4.0-micro")
-        .build()
-        .await
+    default_vlm_model().await
 }
 
 #[cfg(feature = "quantize")]
 pub async fn default_vlm_model() -> anyhow::Result<Model> {
-    ModelBuilder::new("google/gemma-3-4b-it")
-        .with_paged_attn(PagedAttentionMetaBuilder::default().build()?)
-        .with_auto_isq(IsqBits::Four)
-        .build()
+    Gemma4bRunner::new()
         .await
+        .map_err(|err| anyhow::anyhow!(err))
 }
 
 #[cfg(not(feature = "quantize"))]
 pub async fn default_vlm_model() -> anyhow::Result<Model> {
-    ModelBuilder::new("google/gemma-3-4b-it")
-        .with_paged_attn(PagedAttentionMetaBuilder::default().build()?)
-        .build()
+    Gemma4bRunner::new()
         .await
+        .map_err(|err| anyhow::anyhow!(err))
 }
 
 impl Default for ScheduleQueues {

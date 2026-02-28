@@ -1,13 +1,18 @@
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use futures::future::BoxFuture;
-use mistralrs::Model;
 use tokio::{
     sync::{Mutex, RwLock},
     task::JoinHandle,
 };
 
-pub struct ModelProducer(Box<dyn Fn() -> BoxFuture<'static, anyhow::Result<Model>> + Send + Sync>);
+use crate::runner::Gemma4bRunner;
+
+pub type Model = Gemma4bRunner;
+
+pub struct ModelProducer(
+    Box<dyn Fn() -> BoxFuture<'static, anyhow::Result<Gemma4bRunner>> + Send + Sync>,
+);
 
 /// unloads the model when not in use
 pub struct ModelManager {

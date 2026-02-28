@@ -9,10 +9,15 @@ async-stream = "0.3.6"
 axum = { version = "0.8.8", features = ["macros", "multipart"] }
 axum-extra = { version = "0.12.5", features = ["typed-header"] }
 clap = { version = "4.5.58", features = ["derive"] }
+encoding_rs = "0.8.35"
 futures = "0.3.31"
+hf-hub = { version = "0.5.0", features = ["tokio"] }
 image = "0.25.9"
+llama-cpp-2 = { git = "https://github.com/zhufucdev/llama-cpp-rs.git", rev = "90470f41f42d91c97b4a4d653600a64b77f6bc63", features = [
+	"llguidance",
+	"mtmd",
+] }
 log = "0.4.29"
-mistralrs = { git = "https://github.com/EricLBuehler/mistral.rs.git", rev = "2a10942d89c17d2c33282f9c7cf97293f7bc271e" }
 postcard = { version = "1.1.3", features = ["alloc"] }
 pretty_env_logger = "0.5.0"
 rand = "0.10.0"
@@ -21,6 +26,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 strum = { version = "0.27.2", features = ["derive"] }
 tempfile = "3.25.0"
+thiserror = "2.0.18"
 tokio = { version = "1.49.0", features = ["rt-multi-thread"] }
 
 [dev-dependencies]
@@ -30,8 +36,6 @@ reqwest = { version = "0.13.2", default-features = false, features = [
 tower = { version = "0.5.3", features = ["util"] }
 
 [features]
-cuda = ["mistralrs/cuda"]
-metal = ["mistralrs/metal"]
-accelerate = ["mistralrs/accelerate"]
-flash-attn = ["mistralrs/flash-attn"]
+cuda = ["llama-cpp-2/cuda"]
+metal = ["llama-cpp-2/metal"]
 quantize = []

@@ -20,6 +20,8 @@ mod cli;
 mod error;
 mod key;
 mod models;
+mod runner;
+mod sample;
 mod schedule;
 mod state;
 mod task;

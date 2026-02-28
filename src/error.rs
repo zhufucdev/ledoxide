@@ -1,26 +1,22 @@
-use std::fmt::Display;
-
-use axum::{
-    Json,
-    extract::{
-        FromRequest,
-        multipart::{MultipartError, MultipartRejection},
-        rejection::{FormRejection, JsonRejection},
-    },
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{Json, http::StatusCode, response::IntoResponse};
 use axum_extra::typed_header::TypedHeaderRejection;
+use clap::error;
 use image::ImageError;
-use serde::de::DeserializeOwned;
+use llama_cpp_2::{
+    ApplyChatTemplateError, ChatTemplateError, DecodeError, LlamaContextLoadError,
+    LlamaModelLoadError, TokenToStringError,
+    llama_batch::BatchAddError,
+    mtmd::{MtmdEvalError, MtmdInitError, MtmdTokenizeError},
+};
 use serde_json::json;
 use strum::Display;
+use thiserror::Error;
 
-#[derive(Debug, Display)]
+#[derive(Debug, Error)]
 pub enum AuthError {
-    #[strum(to_string = "invalid key")]
+    #[error("invalid key")]
     InvalidKey,
-    #[strum(to_string = "invalid request header")]
+    #[error("invalid request header")]
     InvalidRequestHeader,
 }
 
@@ -68,36 +64,6 @@ impl IntoResponse for CreateTaskError {
     }
 }
 
-#[derive(Debug, Display)]
-pub enum RunTaskError {
-    #[strum(to_string = "{0}")]
-    Generic(anyhow::Error),
-    #[strum(to_string = "mistralrs: {0}")]
-    Mistral(mistralrs::error::Error),
-    #[strum(to_string = "empty amount, model responded with: {0}")]
-    EmptyAmount(String),
-    #[strum(to_string = "invalid image in request: {0}")]
-    InvalidInputImage(ImageError),
-}
-
-impl From<anyhow::Error> for RunTaskError {
-    fn from(value: anyhow::Error) -> Self {
-        Self::Generic(value)
-    }
-}
-
-impl From<mistralrs::error::Error> for RunTaskError {
-    fn from(value: mistralrs::error::Error) -> Self {
-        Self::Mistral(value)
-    }
-}
-
-impl From<ImageError> for RunTaskError {
-    fn from(value: ImageError) -> Self {
-        Self::InvalidInputImage(value)
-    }
-}
-
 impl<E> From<E> for CreateTaskError
 where
     E: std::error::Error + Send + Sync + 'static,
@@ -107,12 +73,44 @@ where
     }
 }
 
-#[derive(Debug, Display)]
+#[derive(Debug, Error)]
+pub enum RunTaskError {
+    #[error("{0}")]
+    Generic(#[from] anyhow::Error),
+    #[error("runner: {0}")]
+    Runner(#[from] RunnerError),
+    #[error("empty amount, model responded with {0}")]
+    EmptyAmount(String),
+    #[error("invalid image in request: {0}")]
+    InvalidInputImage(#[from] ImageError),
+}
+
+#[derive(Debug, Error)]
+pub enum RunnerError {
+    #[error("load context: {0}")]
+    LoadContext(#[from] LlamaContextLoadError),
+    #[error("load chat template: {0}")]
+    LoadChatTemplate(#[from] ChatTemplateError),
+    #[error("apply chat template: {0}")]
+    ApplyChatTemplate(#[from] ApplyChatTemplateError),
+    #[error("mtmd tokenize: {0}")]
+    MtmdTokenize(#[from] MtmdTokenizeError),
+    #[error("token-string conversion: {0}")]
+    RunTask(#[from] TokenToStringError),
+    #[error("batch add: {0}")]
+    BatchAdd(#[from] BatchAddError),
+    #[error("mtmd eval: {0}")]
+    MtmdEval(#[from] MtmdEvalError),
+    #[error("batch decode: {0}")]
+    BatchDecode(#[from] DecodeError),
+}
+
+#[derive(Debug, Error)]
 pub enum GetTaskError {
-    #[strum(to_string = "task not found")]
+    #[error("task not found")]
     NotFound,
-    #[strum(to_string = "{0}")]
-    Internal(anyhow::Error),
+    #[error("{0}")]
+    Internal(#[from] anyhow::Error),
 }
 
 impl IntoResponse for GetTaskError {
@@ -128,8 +126,14 @@ impl IntoResponse for GetTaskError {
     }
 }
 
-impl From<anyhow::Error> for GetTaskError {
-    fn from(value: anyhow::Error) -> Self {
-        Self::Internal(value)
-    }
+#[derive(Debug, Error)]
+pub enum CreateLlamaCppRunnerError {
+    #[error("hf hub")]
+    HfHub(#[from] hf_hub::api::tokio::ApiError),
+    #[error("load model")]
+    LoadModel(#[from] LlamaModelLoadError),
+    #[error("load mtmd")]
+    LoadMtmd(#[from] MtmdInitError),
+    #[error("load chat template")]
+    LoadChatTemplate(#[from] ChatTemplateError),
 }
