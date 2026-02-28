@@ -1,6 +1,7 @@
 target/
 .git/
 .env
+.direnv/
 .DS_Store
 Dockerfile
 cloudbuild.yaml
