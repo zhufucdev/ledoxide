@@ -17,11 +17,9 @@ use tokio::{
     task::JoinHandle,
 };
 
-#[cfg(not(feature = "quantize"))]
 use crate::models::Model;
 use crate::{
     models::{ModelManager, ModelProducer},
-    runner::Gemma3Runner,
     task::{self, TaskControlBlock, TaskDescriptor},
 };
 

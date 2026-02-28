@@ -356,7 +356,7 @@ impl<'de> Deserialize<'de> for TaskControlBlock {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, io::Write, path::PathBuf, str::FromStr, time::Duration};
+    use std::{path::PathBuf, str::FromStr};
 
     use tokio::fs;
 

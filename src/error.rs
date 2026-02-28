@@ -1,6 +1,5 @@
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use axum_extra::typed_header::TypedHeaderRejection;
-use clap::error;
 use image::ImageError;
 use llama_cpp_2::{
     ApplyChatTemplateError, ChatTemplateError, DecodeError, GrammarError, LlamaContextLoadError,
