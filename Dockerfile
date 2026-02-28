@@ -40,11 +40,7 @@ RUN mv Cargo.edit Cargo.toml && \
 # See .dockerignore
 COPY . .
 
-# Use BuildKit cache mounts for external build cache
-RUN --mount=type=cache,target=/root/.cargo/registry \
-    --mount=type=cache,target=/root/.cargo/git \
-    --mount=type=cache,target=/app/target \
-    cargo build --release --features 'cuda' && \
+RUN cargo build --release --features 'cuda' && \
     # Copy out the binary before the cache mount disappears
     cp $(cargo metadata --no-deps --format-version 1 | \
          python3 -c "import sys,json; pkgs=json.load(sys.stdin)['packages']; print(pkgs[0]['targets'][0]['name'])") \
