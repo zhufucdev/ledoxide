@@ -51,7 +51,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV HF_HOME=/huggingface
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libssl3 \
+    libssl3 libgomp1 \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
