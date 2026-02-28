@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     python3 \
     clang \
+    cmake \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Rust via rustup
