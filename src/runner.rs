@@ -1,8 +1,6 @@
-use std::{cell::RefCell, io::IsTerminal, num::NonZeroU32, rc::Rc, sync::LazyLock};
+use std::{io::IsTerminal, num::NonZeroU32, sync::LazyLock, usize};
 
-use async_stream::try_stream;
-use encoding_rs::UTF_8;
-use futures::{Stream, TryStreamExt};
+use encoding_rs::{Decoder, UTF_8};
 use hf_hub::api::tokio::ApiBuilder;
 use llama_cpp_2::{
     LlamaContextLoadError,
@@ -11,35 +9,31 @@ use llama_cpp_2::{
     llama_batch::LlamaBatch,
     model::{LlamaChatMessage, LlamaChatTemplate, LlamaModel},
     mtmd::{self, MtmdBitmap, MtmdContext, MtmdInputText},
+    sampling::LlamaSampler,
 };
 use strum::Display;
-use tokio::pin;
 
 use crate::{
     error::{CreateLlamaCppRunnerError, RunnerError},
     sample::{LlguidanceSamplingParams, SimpleSamplingParams},
 };
 
-#[macro_export]
-macro_rules! StreamableRunnerResponse {
-    ($key:ident) => {
-        $key Stream<Item = Result<String, RunnerError>>
-    };
+pub trait TextLmRunner<'a> {
+    type Response: Iterator<Item = Result<String, RunnerError>>;
+    fn stream_lm_response(&'a self, request: TextLmRequest) -> Self::Response;
 }
 
-pub trait TextLmRunner {
-    fn stream_lm_response(&self, request: TextLmRequest) -> StreamableRunnerResponse!(impl);
+pub trait VisionLmRunner<'a> {
+    type Response: Iterator<Item = Result<String, RunnerError>>;
+    fn stream_vlm_response(&'a self, request: VisionLmRequest) -> Self::Response;
 }
 
-pub trait VisionLmRunner {
-    fn stream_vlm_response(&self, request: VisionLmRequest) -> StreamableRunnerResponse!(impl);
-}
-
+#[derive(Debug, Clone)]
 pub struct RunnerRequest<M> {
     pub messages: Vec<(MessageRole, M)>,
     pub sampling: SimpleSamplingParams,
     pub llguidance: Option<LlguidanceSamplingParams>,
-    pub max_seq: i32,
+    pub max_seq: usize,
 }
 
 impl<M> Default for RunnerRequest<M> {
@@ -48,7 +42,7 @@ impl<M> Default for RunnerRequest<M> {
             messages: vec![],
             sampling: Default::default(),
             llguidance: None,
-            max_seq: i32::MAX,
+            max_seq: usize::MAX,
         }
     }
 }
@@ -56,40 +50,31 @@ impl<M> Default for RunnerRequest<M> {
 pub type TextLmRequest = RunnerRequest<String>;
 pub type VisionLmRequest = RunnerRequest<ImageOrText>;
 
-async fn get_whole_response(
-    stream: StreamableRunnerResponse!(impl),
-) -> Result<String, RunnerError> {
-    let mut response = String::new();
-    pin!(stream);
-    while let Some(chunk) = stream.try_next().await? {
-        response += chunk.as_str();
-    }
-    Ok(response)
+pub trait TextLmRunnerExt<'a> {
+    async fn get_lm_response(&'a self, request: TextLmRequest) -> Result<String, RunnerError>;
 }
 
-pub trait TextLmRunnerExt {
-    async fn get_lm_response(&self, request: TextLmRequest) -> Result<String, RunnerError>;
+pub trait VisionLmRunnerExt<'a> {
+    async fn get_vlm_response(&'a self, request: VisionLmRequest) -> Result<String, RunnerError>;
 }
 
-pub trait VisionLmRunnerExt {
-    async fn get_vlm_response(&self, request: VisionLmRequest) -> Result<String, RunnerError>;
-}
-
-impl<T> TextLmRunnerExt for T
+impl<'a, T> TextLmRunnerExt<'a> for T
 where
-    T: TextLmRunner,
+    T: TextLmRunner<'a>,
 {
-    async fn get_lm_response(&self, request: TextLmRequest) -> Result<String, RunnerError> {
-        Ok(get_whole_response(self.stream_lm_response(request)).await?)
+    async fn get_lm_response(&'a self, request: TextLmRequest) -> Result<String, RunnerError> {
+        self.stream_lm_response(request)
+            .collect::<Result<String, _>>()
     }
 }
 
-impl<T> VisionLmRunnerExt for T
+impl<'a, T> VisionLmRunnerExt<'a> for T
 where
-    T: VisionLmRunner,
+    T: VisionLmRunner<'a>,
 {
-    async fn get_vlm_response(&self, request: VisionLmRequest) -> Result<String, RunnerError> {
-        Ok(get_whole_response(self.stream_vlm_response(request)).await?)
+    async fn get_vlm_response(&'a self, request: VisionLmRequest) -> Result<String, RunnerError> {
+        self.stream_vlm_response(request)
+            .collect::<Result<String, _>>()
     }
 }
 
@@ -103,6 +88,7 @@ pub enum MessageRole {
     System,
 }
 
+#[derive(Debug, Clone)]
 pub enum ImageOrText {
     Text(String),
     Image(image::DynamicImage),
@@ -150,14 +136,75 @@ impl Gemma4bRunner {
 }
 
 impl Gemma4bRunner {
-    fn generate_response(
-        &self,
-        ctx: &RefCell<LlamaContext<'_>>,
-        request: &VisionLmRequest,
-    ) -> Result<impl Iterator<Item = Result<String, RunnerError>>, RunnerError> {
+    fn new_context_window(&self) -> Result<LlamaContext<'_>, LlamaContextLoadError> {
+        self.model.new_context(
+            &LLAMA_BACKEND,
+            LlamaContextParams::default().with_n_ctx(Some(self.ctx_size)),
+        )
+    }
+}
+
+impl<'a> TextLmRunner<'a> for Gemma4bRunner {
+    type Response = GemmaStream<'a>;
+
+    fn stream_lm_response(&'a self, request: TextLmRequest) -> Self::Response {
+        let request: VisionLmRequest = request.into();
+        let ctx = self
+            .new_context_window()
+            .map_err(|err| RunnerError::from(err));
+        GemmaStream::new(ctx, request, self)
+    }
+}
+
+impl<'a> VisionLmRunner<'a> for Gemma4bRunner {
+    type Response = GemmaStream<'a>;
+
+    fn stream_vlm_response(&'a self, request: VisionLmRequest) -> Self::Response {
+        let ctx = self
+            .new_context_window()
+            .map_err(|err| RunnerError::from(err));
+        GemmaStream::new(ctx, request, self)
+    }
+}
+
+impl From<TextLmRequest> for VisionLmRequest {
+    fn from(value: TextLmRequest) -> Self {
+        Self {
+            messages: value
+                .messages
+                .into_iter()
+                .map(|(role, text)| (role, ImageOrText::Text(text)))
+                .collect(),
+            sampling: value.sampling,
+            llguidance: value.llguidance,
+            max_seq: value.max_seq,
+        }
+    }
+}
+
+pub struct GemmaStream<'a> {
+    ctx_source: Option<Result<LlamaContext<'a>, RunnerError>>,
+    ctx: Option<LlamaContext<'a>>,
+    req: VisionLmRequest,
+    runner: &'a Gemma4bRunner,
+    runtime: Option<Runtime<'a>>,
+    done: bool,
+}
+
+struct Runtime<'a> {
+    sampler: LlamaSampler,
+    decoder: Decoder,
+    batch: LlamaBatch<'a>,
+    n_past: i32,
+    step: usize,
+}
+
+impl<'a> GemmaStream<'a> {
+    fn prepare(&mut self) -> Result<(), RunnerError> {
         // Preprocess the message, flattening media
         let media_marker = mtmd::mtmd_default_marker();
-        let messages = request
+        let messages = self
+            .req
             .messages
             .iter()
             .fold(
@@ -171,8 +218,8 @@ impl Gemma4bRunner {
                         && last.0 == *role
                     {
                         // merge adjacent
-                        acc.remove(acc.len() - 1);
-                        acc.push((role.clone(), format!("{0}\n{text}", acc[acc.len() - 1].1)));
+                        let (_, adj) = acc.remove(acc.len() - 1);
+                        acc.push((role.clone(), format!("{0}\n{text}", adj)));
                         acc
                     } else {
                         acc.push((role.clone(), text.to_string()));
@@ -187,11 +234,13 @@ impl Gemma4bRunner {
         log::debug!(target: "gemma", "preprocessed messages: {messages:?}");
 
         // Aggregate images
-        let chat_template = self.model.chat_template(None)?;
-        let formatted_prompt = self
-            .model
-            .apply_chat_template(&chat_template, &messages, true)?;
-        let bitmaps = request
+        let chat_template = self.runner.model.chat_template(None)?;
+        let formatted_prompt =
+            self.runner
+                .model
+                .apply_chat_template(&chat_template, &messages, true)?;
+        let bitmaps = self
+            .req
             .messages
             .iter()
             .filter_map(|msg| match &msg.1 {
@@ -209,7 +258,7 @@ impl Gemma4bRunner {
             })
             .collect::<Vec<_>>();
         let bitmap_refs = bitmaps.iter().collect::<Vec<_>>();
-        let chunks = self.mtmd_ctx.tokenize(
+        let chunks = self.runner.mtmd_ctx.tokenize(
             MtmdInputText {
                 text: formatted_prompt,
                 add_special: true,
@@ -218,76 +267,114 @@ impl Gemma4bRunner {
             &bitmap_refs,
         )?;
         log::debug!(target: "gemma", "tokenization resulted in {} chunks", chunks.len());
-        let n_past = chunks.eval_chunks(&self.mtmd_ctx, &ctx.borrow(), 0, 0, 1, true)?;
+        let n_past = chunks.eval_chunks(
+            &self.runner.mtmd_ctx,
+            self.ctx.as_ref().unwrap(),
+            0,
+            0,
+            1,
+            true,
+        )?;
 
-        // Generate response
-        let sampler = RefCell::new(request.sampling.to_llama());
-        let decoder = RefCell::new(UTF_8.new_decoder());
-        let batch = RefCell::new(LlamaBatch::new(self.ctx_size.get() as usize, 1));
-        let ctx = Rc::new(ctx);
-        let (ctx_1, ctx_2) = (ctx.clone(), ctx.clone());
-        let iter = (0..request.max_seq)
-            .map(move |step| {
-                let token = (&sampler.borrow_mut().sample(&ctx_1.borrow(), -1)).clone();
-                sampler.borrow_mut().accept(token);
-                (step, token)
-            })
-            .take_while(|(_, token)| self.model.is_eog_token(token.clone()))
-            .map(move |(step, token)| -> Result<String, RunnerError> {
-                let mut batch = batch.borrow_mut();
-                batch.clear();
-                batch.add(token, n_past + step, &[0], true)?;
-                ctx_2.borrow_mut().decode(&mut batch)?;
-                let piece =
-                    self.model
-                        .token_to_piece(token, &mut decoder.borrow_mut(), true, None)?;
-                Ok(piece)
-            });
-        Ok(iter)
-    }
+        // Generate preparation
+        let prepare = Runtime {
+            sampler: self.req.sampling.to_llama(),
+            decoder: UTF_8.new_decoder(),
+            batch: LlamaBatch::new(self.runner.ctx_size.get() as usize, 1),
+            n_past,
+            step: 0,
+        };
 
-    fn new_context_window(&self) -> Result<LlamaContext<'_>, LlamaContextLoadError> {
-        self.model.new_context(
-            &LLAMA_BACKEND,
-            LlamaContextParams::default().with_n_ctx(Some(self.ctx_size)),
-        )
+        self.runtime = Some(prepare);
+        Ok(())
     }
 }
 
-impl TextLmRunner for Gemma4bRunner {
-    fn stream_lm_response(&self, request: TextLmRequest) -> StreamableRunnerResponse!(impl) {
-        try_stream! {
-            let ctx = RefCell::new(self.new_context_window()?);
-            let vlm_req: VisionLmRequest = request.into();
-            for chunk in self.generate_response(&ctx, &vlm_req)? {
-                yield chunk?;
+impl Iterator for GemmaStream<'_> {
+    type Item = Result<String, RunnerError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+
+        if let Some(result) = self.ctx_source.take() {
+            match result {
+                Ok(ctx) => self.ctx = Some(ctx),
+                Err(err) => {
+                    self.done = true;
+                    return Some(Err(err));
+                }
+            }
+        }
+
+        if self.runtime.is_none()
+            && let Err(err) = self.prepare()
+        {
+            self.done = true;
+            return Some(Err(err));
+        }
+        let Runtime {
+            sampler,
+            decoder,
+            batch,
+            n_past,
+            step,
+        } = self.runtime.as_mut().unwrap();
+
+        if *step >= self.req.max_seq {
+            self.done = true;
+            return None;
+        }
+
+        // Sample response token
+        let ctx = self.ctx.as_mut().unwrap();
+        let runner = self.runner;
+        let step_copy = step.clone();
+        let mut sample = move || -> Result<Option<String>, RunnerError> {
+            let token = (&sampler.sample(ctx, -1)).clone();
+            sampler.accept(token);
+            if runner.model.is_eog_token(token) {
+                return Ok(None);
+            }
+            batch.clear();
+            batch.add(token, *n_past + (step_copy as i32), &[0], true)?;
+
+            ctx.decode(batch)?;
+
+            let piece = runner.model.token_to_piece(token, decoder, true, None)?;
+            Ok(Some(piece))
+        };
+        match sample() {
+            Ok(Some(piece)) => {
+                *step += 1;
+                return Some(Ok(piece));
+            }
+            Ok(None) => {
+                self.done = true;
+                return None;
+            }
+            Err(err) => {
+                self.done = true;
+                return Some(Err(err));
             }
         }
     }
 }
 
-impl VisionLmRunner for Gemma4bRunner {
-    fn stream_vlm_response(&self, request: VisionLmRequest) -> StreamableRunnerResponse!(impl) {
-        try_stream! {
-            let ctx = RefCell::new(self.new_context_window()?);
-            for chunk in self.generate_response(&ctx, &request)? {
-                yield chunk?;
-            }
-        }
-    }
-}
-
-impl From<TextLmRequest> for VisionLmRequest {
-    fn from(value: TextLmRequest) -> Self {
+impl<'a> GemmaStream<'a> {
+    fn new(
+        source: Result<LlamaContext<'a>, RunnerError>,
+        req: VisionLmRequest,
+        runner: &'a Gemma4bRunner,
+    ) -> Self {
         Self {
-            messages: value
-                .messages
-                .into_iter()
-                .map(|(role, text)| (role, ImageOrText::Text(text)))
-                .collect(),
-            sampling: value.sampling,
-            llguidance: value.llguidance,
-            max_seq: value.max_seq,
+            ctx_source: Some(source),
+            ctx: None,
+            req,
+            runner,
+            runtime: None,
+            done: false,
         }
     }
 }

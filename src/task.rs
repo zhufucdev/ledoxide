@@ -63,7 +63,7 @@ impl TaskDescriptor {
         if let Some(sampling) = &self.vlm_sampling {
             request.sampling = sampling.clone();
         }
-        let description = model.get_vlm_response(request).await?;
+        let description = model.as_ref().get_vlm_response(request).await?;
         drop(model);
         log::debug!(target: "task runner", "description: {}", description);
 

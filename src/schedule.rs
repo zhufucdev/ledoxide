@@ -1,8 +1,7 @@
 use std::{
     collections::HashMap,
     io::{self, SeekFrom},
-    ops::Deref,
-    sync::{Arc, LazyLock},
+    sync::Arc,
     time::Duration,
 };
 
@@ -225,7 +224,7 @@ pub async fn default_lm_model() -> anyhow::Result<Model> {
 
 #[cfg(feature = "quantize")]
 pub async fn default_vlm_model() -> anyhow::Result<Model> {
-    Gemma4bRunner::new()
+    Gemma4bRunnerInner::new()
         .await
         .map_err(|err| anyhow::anyhow!(err))
 }

@@ -27,6 +27,7 @@ impl SimpleSamplingParams {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct LlguidanceSamplingParams {
     pub schema: LlguidanceSchema,
     pub data: String,

@@ -11,7 +11,7 @@ use crate::runner::Gemma4bRunner;
 pub type Model = Gemma4bRunner;
 
 pub struct ModelProducer(
-    Box<dyn Fn() -> BoxFuture<'static, anyhow::Result<Gemma4bRunner>> + Send + Sync>,
+    Box<dyn Fn() -> BoxFuture<'static, anyhow::Result<Model>> + Send + Sync>,
 );
 
 /// unloads the model when not in use

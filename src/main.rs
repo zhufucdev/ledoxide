@@ -93,7 +93,7 @@ mod tests {
     use std::{path::PathBuf, str::FromStr, time::Duration};
 
     use axum::{body::Body, extract::Request};
-    use futures::{StreamExt, TryFutureExt, TryStreamExt};
+    use futures::{TryFutureExt, TryStreamExt};
     use reqwest::{StatusCode, multipart::Form};
     use tower::{Service, util::ServiceExt};
 
