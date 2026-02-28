@@ -277,15 +277,19 @@ impl<'a> GemmaStream<'a> {
         )?;
 
         // Generate preparation
-        let prepare = Runtime {
+        let mut preparation = Runtime {
             sampler: self.req.sampling.to_llama(),
             decoder: UTF_8.new_decoder(),
             batch: LlamaBatch::new(self.runner.ctx_size.get() as usize, 1),
             n_past,
             step: 0,
         };
+        if let Some(llguidance) = &self.req.llguidance {
+            let llg_sampler = llguidance.to_llama(&self.runner.model)?;
+            preparation.sampler = LlamaSampler::chain_simple([llg_sampler, preparation.sampler]);
+        }
 
-        self.runtime = Some(prepare);
+        self.runtime = Some(preparation);
         Ok(())
     }
 }

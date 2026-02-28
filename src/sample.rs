@@ -34,7 +34,7 @@ pub struct LlguidanceSamplingParams {
 }
 
 impl LlguidanceSamplingParams {
-    fn to_llama(&self, model: &LlamaModel) -> Result<LlamaSampler, GrammarError> {
+    pub fn to_llama(&self, model: &LlamaModel) -> Result<LlamaSampler, GrammarError> {
         LlamaSampler::llguidance(model, self.schema.to_string().as_str(), &self.data)
     }
 }

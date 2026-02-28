@@ -132,7 +132,15 @@ impl TaskDescriptor {
             )],
             llguidance: Some(LlguidanceSamplingParams {
                 schema: LlguidanceSchema::Lark,
-                data: include_str!("../constraint/categorization.lark").to_string(),
+                data: format!(
+                    include_str!("../constraint/categorization.lark"),
+                    Category::all_cases()
+                        .iter()
+                        .map(|c| c.name())
+                        .collect::<Vec<_>>()
+                        .join("|")
+                )
+                .to_string(),
             }),
             ..Default::default()
         };

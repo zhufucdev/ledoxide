@@ -3,7 +3,7 @@ use axum_extra::typed_header::TypedHeaderRejection;
 use clap::error;
 use image::ImageError;
 use llama_cpp_2::{
-    ApplyChatTemplateError, ChatTemplateError, DecodeError, LlamaContextLoadError,
+    ApplyChatTemplateError, ChatTemplateError, DecodeError, GrammarError, LlamaContextLoadError,
     LlamaModelLoadError, TokenToStringError,
     llama_batch::BatchAddError,
     mtmd::{MtmdEvalError, MtmdInitError, MtmdTokenizeError},
@@ -103,6 +103,8 @@ pub enum RunnerError {
     MtmdEval(#[from] MtmdEvalError),
     #[error("batch decode: {0}")]
     BatchDecode(#[from] DecodeError),
+    #[error("llguidance: {0}")]
+    Llguidance(#[from] GrammarError),
 }
 
 #[derive(Debug, Error)]
