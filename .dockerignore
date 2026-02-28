@@ -3,3 +3,6 @@ target/
 .env
 .DS_Store
 Dockerfile
+cloudbuild.yaml
+flake.lock
+flake.nix
