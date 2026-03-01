@@ -30,7 +30,10 @@ WORKDIR /app
 
 # Build the dependencies
 COPY ./Cargo.edit ./Cargo.edit.lock ./
-RUN mv Cargo.edit Cargo.toml && \
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/app/target \
+    mv Cargo.edit Cargo.toml && \
     mv Cargo.edit.lock Cargo.lock && \
     mkdir src && \
     echo "fn main() {}" > src/main.rs && \
@@ -40,7 +43,10 @@ RUN mv Cargo.edit Cargo.toml && \
 # See .dockerignore
 COPY . .
 
-RUN cargo build --release --features 'cuda' && \
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/app/target \
+    cargo build --release --features 'cuda' && \
     # Copy out the binary before the cache mount disappears
     cp $(cargo metadata --no-deps --format-version 1 | \
          python3 -c "import sys,json; pkgs=json.load(sys.stdin)['packages']; print(pkgs[0]['targets'][0]['name'])") \
