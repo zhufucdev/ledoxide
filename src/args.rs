@@ -29,6 +29,9 @@ pub struct Cli {
     /// How long to wait for until an inactive model is removed from system memory
     #[arg(long, default_value_t = 5f32)]
     pub model_timeout_minutes: f32,
+    /// Offline mode, use cached models only without reaching Hugging Face hub
+    #[arg(long, default_value_t = false)]
+    pub offline: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -38,6 +41,7 @@ pub struct App {
     pub max_concurrency: usize,
     pub max_memory_size: usize,
     pub model_timeout: Duration,
+    pub offline: bool,
 }
 
 impl Default for App {
@@ -48,6 +52,7 @@ impl Default for App {
             max_concurrency: 4,
             max_memory_size: 468_000,
             model_timeout: Duration::from_mins(5),
+            offline: false
         }
     }
 }
@@ -70,6 +75,7 @@ impl From<Cli> for App {
             max_concurrency: value.max_concurrency,
             max_memory_size: value.max_memory_size,
             model_timeout: Duration::from_secs_f32(value.model_timeout_minutes / 60f32),
+            offline: value.offline,
         }
     }
 }

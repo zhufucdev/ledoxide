@@ -17,7 +17,10 @@ use tokio::{
     task::JoinHandle,
 };
 
-use crate::models::Model;
+use crate::{
+    models::Model,
+    runner::{DEFAULT_MODEL_FILENAME, DEFAULT_MODEL_ID, DEFAULT_MULTIMODEL_FILENAME},
+};
 use crate::{
     models::{ModelManager, ModelProducer},
     task::{self, TaskControlBlock, TaskDescriptor},
@@ -223,14 +226,65 @@ pub async fn large_lm_model() -> anyhow::Result<Model> {
     large_vlm_model().await
 }
 
+const GEMMA_3_12B_GUFF_MODEL_ID: &str = "google/gemma-3-12b-it-qat-q4_0-gguf";
+const GEMMA_3_12B_GUFF_MODEL_FILENAME: &str = "gemma-3-12b-it-q4_0.gguf";
+const GEMMA_3_12B_GUFF_MULTIMODEL_FILENAME: &str = "mmproj-model-f16-12B.gguf";
+
 pub async fn large_vlm_model() -> anyhow::Result<Model> {
     Model::new(
-        "google/gemma-3-12b-it-qat-q4_0-gguf",
-        "gemma-3-12b-it-q4_0.gguf",
-        "mmproj-model-f16-12B.gguf",
+        GEMMA_3_12B_GUFF_MODEL_ID,
+        GEMMA_3_12B_GUFF_MODEL_FILENAME,
+        GEMMA_3_12B_GUFF_MULTIMODEL_FILENAME,
     )
     .await
     .map_err(|err| anyhow::anyhow!(err))
+}
+
+fn offline_model(
+    repo_id: &str,
+    model_filename: &str,
+    multimodel_filename: &str,
+) -> anyhow::Result<Model> {
+    let hf_cache = std::env::var("HF_HOME")
+        .map(|name| hf_hub::Cache::new(name.into()))
+        .unwrap_or_else(|_| hf_hub::Cache::default());
+    let model_repo = hf_cache.model(repo_id.to_string());
+    log::debug!(target: "schedule",
+        "offline model repo: {model_repo:?}, model_filename: {model_filename}, multimodel_filename: {multimodel_filename}");
+
+    Model::from_files(
+        model_repo.get(model_filename).ok_or(anyhow::anyhow!(
+            "Model is not cached while running in offline mode"
+        ))?,
+        model_repo.get(multimodel_filename).ok_or(anyhow::anyhow!(
+            "Multimodel is not cached while running in offline mode"
+        ))?,
+    )
+    .map_err(|err| anyhow::anyhow!(err))
+}
+
+pub async fn offline_large_lm_model() -> anyhow::Result<Model> {
+    offline_large_vlm_model().await
+}
+
+pub async fn offline_large_vlm_model() -> anyhow::Result<Model> {
+    offline_model(
+        GEMMA_3_12B_GUFF_MODEL_ID,
+        GEMMA_3_12B_GUFF_MODEL_FILENAME,
+        GEMMA_3_12B_GUFF_MULTIMODEL_FILENAME,
+    )
+}
+
+pub async fn offline_lm_model() -> anyhow::Result<Model> {
+    offline_vlm_model().await
+}
+
+pub async fn offline_vlm_model() -> anyhow::Result<Model> {
+    offline_model(
+        DEFAULT_MODEL_ID,
+        DEFAULT_MODEL_FILENAME,
+        DEFAULT_MULTIMODEL_FILENAME,
+    )
 }
 
 impl Default for ScheduleQueues {

@@ -3,7 +3,10 @@ use std::sync::Arc;
 use crate::{
     args,
     models::ModelProducer,
-    schedule::{Scheduler, default_lm_model, default_vlm_model, large_lm_model, large_vlm_model},
+    schedule::{
+        Scheduler, default_lm_model, default_vlm_model, large_lm_model, large_vlm_model,
+        offline_large_lm_model, offline_large_vlm_model, offline_lm_model, offline_vlm_model,
+    },
 };
 
 #[derive(Clone)]
@@ -14,7 +17,19 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(args: &args::App) -> Self {
-        let (lm, vlm) = if args.large_model {
+        let (lm, vlm) = if args.offline {
+            if args.large_model {
+                (
+                    ModelProducer::new(offline_large_lm_model),
+                    ModelProducer::new(offline_large_vlm_model),
+                )
+            } else {
+                (
+                    ModelProducer::new(offline_lm_model),
+                    ModelProducer::new(offline_vlm_model),
+                )
+            }
+        } else if args.large_model {
             (
                 ModelProducer::new(large_lm_model),
                 ModelProducer::new(large_vlm_model),

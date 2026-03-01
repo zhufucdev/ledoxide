@@ -1,4 +1,11 @@
-use std::{io::IsTerminal, num::NonZeroU32, path::PathBuf, str::FromStr, sync::LazyLock, usize};
+use std::{
+    io::IsTerminal,
+    num::NonZeroU32,
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::LazyLock,
+    usize,
+};
 
 use encoding_rs::{Decoder, UTF_8};
 use hf_hub::api::tokio::ApiBuilder;
@@ -27,6 +34,10 @@ pub trait VisionLmRunner<'a> {
     type Response: Iterator<Item = Result<String, RunnerError>>;
     fn stream_vlm_response(&'a self, request: VisionLmRequest) -> Self::Response;
 }
+
+pub const DEFAULT_MODEL_ID: &str = "google/gemma-3-4b-it-qat-q4_0-gguf";
+pub const DEFAULT_MODEL_FILENAME: &str = "gemma-3-4b-it-q4_0.gguf";
+pub const DEFAULT_MULTIMODEL_FILENAME: &str = "mmproj-model-f16-4B.gguf";
 
 #[derive(Debug, Clone)]
 pub struct RunnerRequest<M> {
@@ -142,13 +153,35 @@ impl Gemma3Runner {
             ctx_size: 10240u32.try_into().unwrap(),
         })
     }
+
     pub async fn default() -> Result<Self, CreateLlamaCppRunnerError> {
         Self::new(
-            "google/gemma-3-4b-it-qat-q4_0-gguf",
-            "gemma-3-4b-it-q4_0.gguf",
-            "mmproj-model-f16-4B.gguf",
+            DEFAULT_MODEL_ID,
+            DEFAULT_MODEL_FILENAME,
+            DEFAULT_MULTIMODEL_FILENAME,
         )
         .await
+    }
+
+    pub fn from_files(
+        model_file: impl AsRef<Path>,
+        multimodel_file: impl AsRef<Path>,
+    ) -> Result<Self, CreateLlamaCppRunnerError> {
+        let model = LlamaModel::load_from_file(&LLAMA_BACKEND, model_file, &Default::default())?;
+        let mtmd_ctx = MtmdContext::init_from_file(
+            multimodel_file.as_ref().as_os_str().to_str().unwrap(),
+            &model,
+            &Default::default(),
+        )?;
+
+        let chat_template = model.chat_template(None)?;
+
+        Ok(Self {
+            model,
+            mtmd_ctx,
+            chat_template,
+            ctx_size: 10240u32.try_into().unwrap(),
+        })
     }
 }
 
