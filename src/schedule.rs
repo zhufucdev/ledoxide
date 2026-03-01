@@ -38,6 +38,8 @@ pub struct Scheduler {
     max_memory_size: usize,
     max_concurrency: usize,
     model_manager: Arc<ModelManager>,
+    lm_id: String,
+    vlm_id: String,
 }
 
 impl Scheduler {
@@ -60,6 +62,28 @@ impl Scheduler {
                     ("lm".to_string(), lm_builder),
                 ]),
             )),
+            lm_id: "lm".to_string(),
+            vlm_id: "vlm".to_string(),
+        }
+    }
+
+    pub fn new_singular(
+        max_concurrency: usize,
+        max_memory_size: usize,
+        model_timeout: Duration,
+        vlm_builder: ModelProducer,
+    ) -> Self {
+        Self {
+            queues: Default::default(),
+            max_memory_size,
+            swap_file: Arc::new(Mutex::new(tempfile().map(File::from_std).unwrap())),
+            max_concurrency,
+            model_manager: Arc::new(ModelManager::new(
+                model_timeout,
+                HashMap::from([("vlm".to_string(), vlm_builder)]),
+            )),
+            lm_id: "vlm".to_string(),
+            vlm_id: "vlm".to_string(),
         }
     }
 
@@ -90,10 +114,11 @@ impl Scheduler {
                 let queues = self.queues.clone();
                 let swap_file = self.swap_file.clone();
                 let max_memory_size = self.max_memory_size;
+                let (lm_id, vlm_id) = (self.lm_id.clone(), self.vlm_id.clone());
                 active_queue.push((
                     tcb.clone(),
                     tokio::spawn(async move {
-                        let job = descriptor.run(mm.as_ref(), "vlm", "lm").await;
+                        let job = descriptor.run(mm.as_ref(), vlm_id, lm_id).await;
                         tcb.set_state(task::State::Finished(
                             match job {
                                 Ok(bill) => Ok(task::Success(bill)),
@@ -204,26 +229,21 @@ impl ScheduleQueues {
 
 impl Default for Scheduler {
     fn default() -> Self {
-        Self::new(
+        Self::new_singular(
             4,
             468_000, // approx. 50 megabytes
             Duration::from_mins(5),
             ModelProducer::new(default_vlm_model),
-            ModelProducer::new(default_lm_model),
         )
     }
-}
-
-pub async fn default_lm_model() -> anyhow::Result<Model> {
-    default_vlm_model().await
 }
 
 pub async fn default_vlm_model() -> anyhow::Result<Model> {
     Model::default().await.map_err(|err| anyhow::anyhow!(err))
 }
 
-pub async fn large_lm_model() -> anyhow::Result<Model> {
-    large_vlm_model().await
+pub async fn default_lm_model() -> anyhow::Result<Model> {
+    default_vlm_model().await
 }
 
 const GEMMA_3_12B_GUFF_MODEL_ID: &str = "google/gemma-3-12b-it-qat-q4_0-gguf";
@@ -263,20 +283,12 @@ fn offline_model(
     .map_err(|err| anyhow::anyhow!(err))
 }
 
-pub async fn offline_large_lm_model() -> anyhow::Result<Model> {
-    offline_large_vlm_model().await
-}
-
 pub async fn offline_large_vlm_model() -> anyhow::Result<Model> {
     offline_model(
         GEMMA_3_12B_GUFF_MODEL_ID,
         GEMMA_3_12B_GUFF_MODEL_FILENAME,
         GEMMA_3_12B_GUFF_MULTIMODEL_FILENAME,
     )
-}
-
-pub async fn offline_lm_model() -> anyhow::Result<Model> {
-    offline_vlm_model().await
 }
 
 pub async fn offline_vlm_model() -> anyhow::Result<Model> {

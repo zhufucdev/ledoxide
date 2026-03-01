@@ -4,8 +4,7 @@ use crate::{
     args,
     models::ModelProducer,
     schedule::{
-        Scheduler, default_lm_model, default_vlm_model, large_lm_model, large_vlm_model,
-        offline_large_lm_model, offline_large_vlm_model, offline_lm_model, offline_vlm_model,
+        Scheduler, default_vlm_model, large_vlm_model, offline_large_vlm_model, offline_vlm_model,
     },
 };
 
@@ -17,36 +16,23 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(args: &args::App) -> Self {
-        let (lm, vlm) = if args.offline {
+        let vlm = if args.offline {
             if args.large_model {
-                (
-                    ModelProducer::new(offline_large_lm_model),
-                    ModelProducer::new(offline_large_vlm_model),
-                )
+                ModelProducer::new(offline_large_vlm_model)
             } else {
-                (
-                    ModelProducer::new(offline_lm_model),
-                    ModelProducer::new(offline_vlm_model),
-                )
+                ModelProducer::new(offline_vlm_model)
             }
         } else if args.large_model {
-            (
-                ModelProducer::new(large_lm_model),
-                ModelProducer::new(large_vlm_model),
-            )
+            ModelProducer::new(large_vlm_model)
         } else {
-            (
-                ModelProducer::new(default_lm_model),
-                ModelProducer::new(default_vlm_model),
-            )
+            ModelProducer::new(default_vlm_model)
         };
         Self {
             auth_key: args.auth_key.clone(),
-            scheduler: Arc::new(Scheduler::new(
+            scheduler: Arc::new(Scheduler::new_singular(
                 args.max_concurrency,
                 args.max_memory_size,
                 args.model_timeout,
-                lm,
                 vlm,
             )),
         }
