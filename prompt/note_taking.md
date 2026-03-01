@@ -7,6 +7,5 @@ Mandatory response format:
 ```
 Reasoning:
 [multiline text]
-Notes:
-[single line text]
+Notes: [single line text]
 ```
