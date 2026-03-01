@@ -74,7 +74,7 @@ impl From<Cli> for App {
             large_model: value.large_model,
             max_concurrency: value.max_concurrency,
             max_memory_size: value.max_memory_size,
-            model_timeout: Duration::from_secs_f32(value.model_timeout_minutes / 60f32),
+            model_timeout: Duration::from_secs_f32(value.model_timeout_minutes * 60f32),
             offline: value.offline,
         }
     }
