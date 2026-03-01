@@ -29,8 +29,9 @@ ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
 WORKDIR /app
 
 # Build the dependencies
-COPY ./Cargo.lock ./Cargo.edit ./
+COPY ./Cargo.edit ./Cargo.edit.lock ./
 RUN mv Cargo.edit Cargo.toml && \
+    mv Cargo.edit.lock Cargo.lock && \
     mkdir src && \
     echo "fn main() {}" > src/main.rs && \
     cargo build --release --features 'cuda' && \
