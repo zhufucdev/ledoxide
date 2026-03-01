@@ -20,6 +20,7 @@ use tokio::{
 
 use crate::{
     models::{ModelProducer, TimedModel},
+    runner::{GEMMA_3_1B_GUFF_MODEL_FILENAME, GEMMA_3_1B_GUFF_MODEL_ID},
     task::{self, TaskControlBlock, TaskDescriptor},
 };
 use crate::{
@@ -257,7 +258,7 @@ pub async fn large_vlm_model() -> anyhow::Result<VisionModel> {
     .map_err(|err| anyhow::anyhow!(err))
 }
 
-fn offline_model(
+fn offline_vision_model(
     repo_id: &str,
     model_filename: &str,
     multimodel_filename: &str,
@@ -282,8 +283,29 @@ fn offline_model(
     .map_err(|err| anyhow::anyhow!(err))
 }
 
+fn offline_text_model(
+    repo_id: &str,
+    model_filename: &str,
+    ctx_size: NonZeroU32,
+) -> anyhow::Result<TextModel> {
+    let hf_cache = std::env::var("HF_HOME")
+        .map(|name| hf_hub::Cache::new(name.into()))
+        .unwrap_or_else(|_| hf_hub::Cache::default());
+    let model_repo = hf_cache.model(repo_id.to_string());
+    log::debug!(target: "schedule",
+        "offline model repo: {model_repo:?}, model_filename: {model_filename}");
+
+    TextModel::from_file(
+        model_repo.get(model_filename).ok_or(anyhow::anyhow!(
+            "Model is not cached while running in offline mode"
+        ))?,
+        ctx_size,
+    )
+    .map_err(|err| anyhow::anyhow!(err))
+}
+
 pub async fn offline_large_vlm_model() -> anyhow::Result<VisionModel> {
-    offline_model(
+    offline_vision_model(
         GEMMA_3_12B_GUFF_MODEL_ID,
         GEMMA_3_12B_GUFF_MODEL_FILENAME,
         GEMMA_3_12B_GUFF_MULTIMODEL_FILENAME,
@@ -292,11 +314,19 @@ pub async fn offline_large_vlm_model() -> anyhow::Result<VisionModel> {
 }
 
 pub async fn offline_vlm_model() -> anyhow::Result<VisionModel> {
-    offline_model(
+    offline_vision_model(
         QWEN_3_VL_4B_GUFF_MODEL_ID,
         QWEN_3_VL_4B_GUFF_MODDEL_FILENAME,
         QWEN_3_VL_4B_GUFF_MULTIMODEL_FILENAME,
         32_768.try_into().unwrap(),
+    )
+}
+
+pub async fn offline_lm_model() -> anyhow::Result<TextModel> {
+    offline_text_model(
+        GEMMA_3_1B_GUFF_MODEL_ID,
+        GEMMA_3_1B_GUFF_MODEL_FILENAME,
+        32_000.try_into().unwrap(),
     )
 }
 

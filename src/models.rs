@@ -1,11 +1,8 @@
-use std::{collections::HashMap, fmt::Display, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Ok;
 use futures::future::BoxFuture;
-use tokio::{
-    sync::{Mutex, RwLock},
-    task::JoinHandle,
-};
+use tokio::{sync::RwLock, task::JoinHandle};
 
 use crate::runner::{Gemma3TextRunner, Gemma3VisionRunner};
 

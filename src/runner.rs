@@ -29,8 +29,8 @@ pub const QWEN_3_VL_4B_GUFF_MODEL_ID: &str = "Qwen/Qwen3-VL-4B-Instruct-GGUF";
 pub const QWEN_3_VL_4B_GUFF_MODDEL_FILENAME: &str = "Qwen3VL-4B-Instruct-Q4_K_M.gguf";
 pub const QWEN_3_VL_4B_GUFF_MULTIMODEL_FILENAME: &str = "mmproj-Qwen3VL-4B-Instruct-F16.gguf";
 
-const GEMMA_3_1B_GUFF_MODEL_ID: &str = "google/gemma-3-1b-it-qat-q4_0-gguf";
-const GEMMA_3_1B_GUFF_MODEL_FILENAME: &str = "gemma-3-1b-it-q4_0.gguf";
+pub const GEMMA_3_1B_GUFF_MODEL_ID: &str = "google/gemma-3-1b-it-qat-q4_0-gguf";
+pub const GEMMA_3_1B_GUFF_MODEL_FILENAME: &str = "gemma-3-1b-it-q4_0.gguf";
 
 pub trait TextLmRunner<'a> {
     type Response: Iterator<Item = Result<String, RunnerError>>;
@@ -121,18 +121,7 @@ impl Gemma3TextRunner {
         ctx_size: NonZeroU32,
     ) -> Result<Self, CreateLlamaCppRunnerError> {
         let repo = build_hf_api()?.model(model_id.to_string());
-        let model = LlamaModel::load_from_file(
-            &LLAMA_BACKEND,
-            repo.get(model_file.as_ref()).await?,
-            &Default::default(),
-        )?;
-
-        let chat_template = model.chat_template(None)?;
-        Ok(Self {
-            model,
-            chat_template,
-            ctx_size,
-        })
+        Self::from_file(repo.get(model_file.as_ref()).await?, ctx_size)
     }
 
     pub async fn default() -> Result<Self, CreateLlamaCppRunnerError> {
@@ -142,6 +131,20 @@ impl Gemma3TextRunner {
             32_000.try_into().unwrap(),
         )
         .await
+    }
+
+    pub fn from_file(
+        model_file: impl AsRef<Path>,
+        ctx_size: NonZeroU32,
+    ) -> Result<Self, CreateLlamaCppRunnerError> {
+        let model = LlamaModel::load_from_file(&LLAMA_BACKEND, model_file, &Default::default())?;
+
+        let chat_template = model.chat_template(None)?;
+        Ok(Self {
+            model,
+            chat_template,
+            ctx_size,
+        })
     }
 }
 
@@ -227,7 +230,7 @@ impl Gemma3VisionRunner {
             model,
             mtmd_ctx,
             chat_template,
-            ctx_size
+            ctx_size,
         })
     }
 
@@ -387,6 +390,7 @@ impl PrepareRun for Gemma3Stream<'_, ImageOrText, Gemma3VisionRunner> {
             let llg_sampler = llguidance.to_llama(&self.runner.model)?;
             preparation.sampler = LlamaSampler::chain_simple([llg_sampler, preparation.sampler]);
         }
+        self.runtime = Some(preparation);
 
         Ok(())
     }
@@ -439,6 +443,7 @@ impl PrepareRun for Gemma3Stream<'_, String, Gemma3TextRunner> {
             let llg_sampler = llguidance.to_llama(&self.runner.model)?;
             preparation.sampler = LlamaSampler::chain_simple([llg_sampler, preparation.sampler]);
         }
+        self.runtime = Some(preparation);
 
         Ok(())
     }
