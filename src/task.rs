@@ -12,10 +12,10 @@ use crate::{
     bill::{Bill, Category},
     error::{CreateTaskError, RunTaskError},
     key,
-    models::ModelManager,
+    models::{TimedModel},
     runner::{
-        ImageOrText, MessageRole, TextLmRequest, TextLmRunnerExt, VisionLmRequest,
-        VisionLmRunnerExt,
+        ImageOrText, MessageRole, TextLmRequest, TextLmRunner, TextLmRunnerExt, VisionLmRequest,
+        VisionLmRunner, VisionLmRunnerExt,
     },
     sample::{LlguidanceSamplingParams, LlguidanceSchema, SimpleSamplingParams},
 };
@@ -40,34 +40,46 @@ impl TaskDescriptor {
         self.vlm_sampling.clone()
     }
 
-    pub async fn run(
+    pub async fn run<VLM, LM>(
         &self,
-        model_manager: &ModelManager,
-        vlm_id: impl AsRef<str>,
-        lm_id: impl AsRef<str>,
-    ) -> Result<Bill, RunTaskError> {
-        let model = model_manager.get_model(vlm_id.as_ref()).await?.unwrap();
-        let mut request = VisionLmRequest {
-            messages: vec![
-                (
-                    MessageRole::User,
-                    ImageOrText::Text(format!(include_str!("../prompt/description.md"))),
-                ),
-                (
-                    MessageRole::User,
-                    ImageOrText::Image(image::load_from_memory(self.image_buf.as_ref())?),
-                ),
-            ],
-            ..Default::default()
+        vlm: &TimedModel<VLM>,
+        lm: Option<&TimedModel<LM>>,
+    ) -> Result<Bill, RunTaskError>
+    where
+        for<'a> LM: TextLmRunner<'a> + Send + Sync + 'static,
+        for<'a> VLM: VisionLmRunner<'a> + TextLmRunner<'a> + Send + Sync + 'static,
+    {
+        let description = {
+            let mut request = VisionLmRequest {
+                messages: vec![
+                    (
+                        MessageRole::User,
+                        ImageOrText::Text(format!(include_str!("../prompt/description.md"))),
+                    ),
+                    (
+                        MessageRole::User,
+                        ImageOrText::Image(image::load_from_memory(self.image_buf.as_ref())?),
+                    ),
+                ],
+                ..Default::default()
+            };
+            if let Some(sampling) = &self.vlm_sampling {
+                request.sampling = sampling.clone();
+            }
+            let runner = vlm.get_model().await?;
+            runner.get_vlm_response(request)?
         };
-        if let Some(sampling) = &self.vlm_sampling {
-            request.sampling = sampling.clone();
-        }
-        let description = model.as_ref().get_vlm_response(request).await?;
-        drop(model);
         log::debug!(target: "task runner", "description: {}", description);
 
-        let model = model_manager.get_model(lm_id.as_ref()).await?.unwrap();
+        let get_lm_response = async |request| -> Result<String, RunTaskError> {
+            if let Some(lm) = lm {
+                let model = lm.get_model().await?;
+                Ok(model.get_lm_response(request)?)
+            } else {
+                let model = vlm.get_model().await?;
+                Ok(model.get_lm_response(request)?)
+            }
+        };
         let mut request = TextLmRequest {
             messages: vec![(
                 MessageRole::User,
@@ -83,7 +95,7 @@ impl TaskDescriptor {
             request.sampling = sampling.clone();
         }
 
-        let notes = model.get_lm_response(request).await?;
+        let notes = get_lm_response(request).await?;
         log::debug!(target: "task runner", "notes: {}", notes);
         let notes = notes
             .rsplit_once("\n")
@@ -110,7 +122,7 @@ impl TaskDescriptor {
         if let Some(sampling) = &self.lm_sampling {
             request.sampling = sampling.clone();
         }
-        let response = model.get_lm_response(request).await?;
+        let response = get_lm_response(request).await?;
         log::debug!(target: "task runner", "amount: {}", response);
         let numeric = Regex::new(r#"([0-9,]+\.?[0-9]{0,})"#).unwrap();
         let amount = numeric.captures(response.rsplit_once("\n").unwrap().1);
@@ -155,7 +167,7 @@ impl TaskDescriptor {
         if let Some(sampling) = &self.lm_sampling {
             request.sampling = sampling.clone();
         }
-        let response = model.get_lm_response(request).await?;
+        let response = get_lm_response(request).await?;
         log::debug!(target: "task runner", "category: {}", response);
         let category = response
             .rsplit_once("\n")
@@ -384,7 +396,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        let response = lm.get_lm_response(request).await.unwrap();
+        let response: String = lm.get_lm_response(request).unwrap();
         log::info!(target: "lm", "{}", response);
     }
 
@@ -412,7 +424,7 @@ mod tests {
         };
         let vlm = schedule::default_vlm_model().await.unwrap();
         log::debug!("model building finished");
-        let response = vlm.get_vlm_response(request).await.unwrap();
+        let response: String = vlm.get_vlm_response(request).unwrap();
         log::info!(target: "vlm", "{}", response);
     }
 }

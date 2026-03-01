@@ -25,6 +25,13 @@ use crate::{
     sample::{LlguidanceSamplingParams, SimpleSamplingParams},
 };
 
+pub const QWEN_3_VL_4B_GUFF_MODEL_ID: &str = "Qwen/Qwen3-VL-4B-Instruct-GGUF";
+pub const QWEN_3_VL_4B_GUFF_MODDEL_FILENAME: &str = "Qwen3VL-4B-Instruct-Q4_K_M.gguf";
+pub const QWEN_3_VL_4B_GUFF_MULTIMODEL_FILENAME: &str = "mmproj-Qwen3VL-4B-Instruct-F16.gguf";
+
+const GEMMA_3_1B_GUFF_MODEL_ID: &str = "google/gemma-3-1b-it-qat-q4_0-gguf";
+const GEMMA_3_1B_GUFF_MODEL_FILENAME: &str = "gemma-3-1b-it-q4_0.gguf";
+
 pub trait TextLmRunner<'a> {
     type Response: Iterator<Item = Result<String, RunnerError>>;
     fn stream_lm_response(&'a self, request: TextLmRequest) -> Self::Response;
@@ -34,10 +41,6 @@ pub trait VisionLmRunner<'a> {
     type Response: Iterator<Item = Result<String, RunnerError>>;
     fn stream_vlm_response(&'a self, request: VisionLmRequest) -> Self::Response;
 }
-
-pub const DEFAULT_MODEL_ID: &str = "google/gemma-3-4b-it-qat-q4_0-gguf";
-pub const DEFAULT_MODEL_FILENAME: &str = "gemma-3-4b-it-q4_0.gguf";
-pub const DEFAULT_MULTIMODEL_FILENAME: &str = "mmproj-model-f16-4B.gguf";
 
 #[derive(Debug, Clone)]
 pub struct RunnerRequest<M> {
@@ -62,18 +65,18 @@ pub type TextLmRequest = RunnerRequest<String>;
 pub type VisionLmRequest = RunnerRequest<ImageOrText>;
 
 pub trait TextLmRunnerExt<'a> {
-    async fn get_lm_response(&'a self, request: TextLmRequest) -> Result<String, RunnerError>;
+    fn get_lm_response(&'a self, request: TextLmRequest) -> Result<String, RunnerError>;
 }
 
 pub trait VisionLmRunnerExt<'a> {
-    async fn get_vlm_response(&'a self, request: VisionLmRequest) -> Result<String, RunnerError>;
+    fn get_vlm_response(&'a self, request: VisionLmRequest) -> Result<String, RunnerError>;
 }
 
 impl<'a, T> TextLmRunnerExt<'a> for T
 where
     T: TextLmRunner<'a>,
 {
-    async fn get_lm_response(&'a self, request: TextLmRequest) -> Result<String, RunnerError> {
+    fn get_lm_response(&'a self, request: TextLmRequest) -> Result<String, RunnerError> {
         self.stream_lm_response(request)
             .collect::<Result<String, _>>()
     }
@@ -83,7 +86,7 @@ impl<'a, T> VisionLmRunnerExt<'a> for T
 where
     T: VisionLmRunner<'a>,
 {
-    async fn get_vlm_response(&'a self, request: VisionLmRequest) -> Result<String, RunnerError> {
+    fn get_vlm_response(&'a self, request: VisionLmRequest) -> Result<String, RunnerError> {
         self.stream_vlm_response(request)
             .collect::<Result<String, _>>()
     }
@@ -105,7 +108,59 @@ pub enum ImageOrText {
     Image(image::DynamicImage),
 }
 
-pub struct Gemma3Runner {
+pub struct Gemma3TextRunner {
+    model: LlamaModel,
+    chat_template: LlamaChatTemplate,
+    ctx_size: NonZeroU32,
+}
+
+impl Gemma3TextRunner {
+    pub async fn new(
+        model_id: impl ToString,
+        model_file: impl AsRef<str>,
+        ctx_size: NonZeroU32,
+    ) -> Result<Self, CreateLlamaCppRunnerError> {
+        let repo = build_hf_api()?.model(model_id.to_string());
+        let model = LlamaModel::load_from_file(
+            &LLAMA_BACKEND,
+            repo.get(model_file.as_ref()).await?,
+            &Default::default(),
+        )?;
+
+        let chat_template = model.chat_template(None)?;
+        Ok(Self {
+            model,
+            chat_template,
+            ctx_size,
+        })
+    }
+
+    pub async fn default() -> Result<Self, CreateLlamaCppRunnerError> {
+        Self::new(
+            GEMMA_3_1B_GUFF_MODEL_ID,
+            GEMMA_3_1B_GUFF_MODEL_FILENAME,
+            32_000.try_into().unwrap(),
+        )
+        .await
+    }
+}
+
+impl<'a> TextLmRunner<'a> for Gemma3TextRunner {
+    type Response = Gemma3Stream<'a, String, Gemma3TextRunner>;
+
+    fn stream_lm_response(&'a self, request: TextLmRequest) -> Self::Response {
+        let ctx = self
+            .model
+            .new_context(
+                &LLAMA_BACKEND,
+                LlamaContextParams::default().with_n_ctx(Some(self.ctx_size)),
+            )
+            .map_err(|err| RunnerError::from(err));
+        Gemma3Stream::new(ctx, request, self, &self.model)
+    }
+}
+
+pub struct Gemma3VisionRunner {
     model: LlamaModel,
     chat_template: LlamaChatTemplate,
     mtmd_ctx: MtmdContext,
@@ -114,24 +169,14 @@ pub struct Gemma3Runner {
 
 static LLAMA_BACKEND: LazyLock<LlamaBackend> = LazyLock::new(|| LlamaBackend::init().unwrap());
 
-impl Gemma3Runner {
+impl Gemma3VisionRunner {
     pub async fn new(
-        model_id: impl ToString,
+        repo_id: impl ToString,
         model_file: impl AsRef<str>,
         multimodel_file: impl AsRef<str>,
+        ctx_size: NonZeroU32,
     ) -> Result<Self, CreateLlamaCppRunnerError> {
-        let mut repo = ApiBuilder::new()
-            .with_progress(std::io::stdin().is_terminal())
-            .with_token(std::env::var("HF_TOKEN").ok());
-        if let Ok(endpoint) = std::env::var("HF_ENDPOINT") {
-            repo = repo.with_endpoint(endpoint);
-        }
-        if let Ok(cache) = std::env::var("HF_HOME") {
-            repo = repo.with_cache_dir(
-                PathBuf::from_str(&cache).expect("HF_HOME env var is not a valid path"),
-            );
-        }
-        let repo = repo.build()?.model(model_id.to_string());
+        let repo = build_hf_api()?.model(repo_id.to_string());
         let model = LlamaModel::load_from_file(
             &LLAMA_BACKEND,
             repo.get(model_file.as_ref()).await?,
@@ -150,15 +195,16 @@ impl Gemma3Runner {
             model,
             mtmd_ctx,
             chat_template,
-            ctx_size: 10240u32.try_into().unwrap(),
+            ctx_size,
         })
     }
 
     pub async fn default() -> Result<Self, CreateLlamaCppRunnerError> {
         Self::new(
-            DEFAULT_MODEL_ID,
-            DEFAULT_MODEL_FILENAME,
-            DEFAULT_MULTIMODEL_FILENAME,
+            QWEN_3_VL_4B_GUFF_MODEL_ID,
+            QWEN_3_VL_4B_GUFF_MODDEL_FILENAME,
+            QWEN_3_VL_4B_GUFF_MULTIMODEL_FILENAME,
+            10240u32.try_into().unwrap(),
         )
         .await
     }
@@ -166,6 +212,7 @@ impl Gemma3Runner {
     pub fn from_files(
         model_file: impl AsRef<Path>,
         multimodel_file: impl AsRef<Path>,
+        ctx_size: NonZeroU32,
     ) -> Result<Self, CreateLlamaCppRunnerError> {
         let model = LlamaModel::load_from_file(&LLAMA_BACKEND, model_file, &Default::default())?;
         let mtmd_ctx = MtmdContext::init_from_file(
@@ -180,12 +227,10 @@ impl Gemma3Runner {
             model,
             mtmd_ctx,
             chat_template,
-            ctx_size: 10240u32.try_into().unwrap(),
+            ctx_size
         })
     }
-}
 
-impl Gemma3Runner {
     fn new_context_window(&self) -> Result<LlamaContext<'_>, LlamaContextLoadError> {
         self.model.new_context(
             &LLAMA_BACKEND,
@@ -194,26 +239,26 @@ impl Gemma3Runner {
     }
 }
 
-impl<'a> TextLmRunner<'a> for Gemma3Runner {
-    type Response = GemmaStream<'a>;
+impl<'a> TextLmRunner<'a> for Gemma3VisionRunner {
+    type Response = Gemma3Stream<'a, ImageOrText, Gemma3VisionRunner>;
 
     fn stream_lm_response(&'a self, request: TextLmRequest) -> Self::Response {
         let request: VisionLmRequest = request.into();
         let ctx = self
             .new_context_window()
             .map_err(|err| RunnerError::from(err));
-        GemmaStream::new(ctx, request, self)
+        Gemma3Stream::new(ctx, request, self, &self.model)
     }
 }
 
-impl<'a> VisionLmRunner<'a> for Gemma3Runner {
-    type Response = GemmaStream<'a>;
+impl<'a> VisionLmRunner<'a> for Gemma3VisionRunner {
+    type Response = Gemma3Stream<'a, ImageOrText, Gemma3VisionRunner>;
 
     fn stream_vlm_response(&'a self, request: VisionLmRequest) -> Self::Response {
         let ctx = self
             .new_context_window()
             .map_err(|err| RunnerError::from(err));
-        GemmaStream::new(ctx, request, self)
+        Gemma3Stream::new(ctx, request, self, &self.model)
     }
 }
 
@@ -232,11 +277,12 @@ impl From<TextLmRequest> for VisionLmRequest {
     }
 }
 
-pub struct GemmaStream<'a> {
+pub struct Gemma3Stream<'a, M, Runner> {
     ctx_source: Option<Result<LlamaContext<'a>, RunnerError>>,
     ctx: Option<LlamaContext<'a>>,
-    req: VisionLmRequest,
-    runner: &'a Gemma3Runner,
+    req: RunnerRequest<M>,
+    runner: &'a Runner,
+    model: &'a LlamaModel,
     runtime: Option<Runtime<'a>>,
     done: bool,
 }
@@ -249,7 +295,11 @@ struct Runtime<'a> {
     step: usize,
 }
 
-impl<'a> GemmaStream<'a> {
+trait PrepareRun {
+    fn prepare(&mut self) -> Result<(), RunnerError>;
+}
+
+impl PrepareRun for Gemma3Stream<'_, ImageOrText, Gemma3VisionRunner> {
     fn prepare(&mut self) -> Result<(), RunnerError> {
         // Preprocess the message, flattening media
         let media_marker = mtmd::mtmd_default_marker();
@@ -338,12 +388,66 @@ impl<'a> GemmaStream<'a> {
             preparation.sampler = LlamaSampler::chain_simple([llg_sampler, preparation.sampler]);
         }
 
-        self.runtime = Some(preparation);
         Ok(())
     }
 }
 
-impl Iterator for GemmaStream<'_> {
+impl PrepareRun for Gemma3Stream<'_, String, Gemma3TextRunner> {
+    fn prepare(&mut self) -> Result<(), RunnerError> {
+        // Preprocess the message, flattening media
+        let media_marker = mtmd::mtmd_default_marker();
+        let messages = self
+            .req
+            .messages
+            .iter()
+            .fold(
+                Vec::<(MessageRole, String)>::new(),
+                |mut acc, (role, message)| {
+                    if let Some(last) = acc.last()
+                        && last.0 == *role
+                    {
+                        // merge adjacent
+                        let (_, adj) = acc.remove(acc.len() - 1);
+                        acc.push((role.clone(), format!("{0}\n{message}", adj)));
+                        acc
+                    } else {
+                        acc.push((role.clone(), message.clone()));
+                        acc
+                    }
+                },
+            )
+            .into_iter()
+            .map(|(role, content)| LlamaChatMessage::new(role.to_string(), content))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("message preprocessing failed");
+        log::debug!(target: "gemma", "preprocessed messages: {messages:?}");
+
+        // Aggregate images
+        let formatted_prompt =
+            self.runner
+                .model
+                .apply_chat_template(&self.runner.chat_template, &messages, true)?;
+        // Generate preparation
+        let mut preparation = Runtime {
+            sampler: self.req.sampling.to_llama(),
+            decoder: UTF_8.new_decoder(),
+            batch: LlamaBatch::new(self.runner.ctx_size.get() as usize, 1),
+            n_past: 0,
+            step: 0,
+        };
+        if let Some(llguidance) = &self.req.llguidance {
+            let llg_sampler = llguidance.to_llama(&self.runner.model)?;
+            preparation.sampler = LlamaSampler::chain_simple([llg_sampler, preparation.sampler]);
+        }
+
+        Ok(())
+    }
+}
+
+impl<'a, M, R> Iterator for Gemma3Stream<'a, M, R>
+where
+    Self: PrepareRun,
+{
     type Item = Result<String, RunnerError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -382,12 +486,12 @@ impl Iterator for GemmaStream<'_> {
 
         // Sample response token
         let ctx = self.ctx.as_mut().unwrap();
-        let runner = self.runner;
+        let model = self.model;
         let step_copy = step.clone();
         let mut sample = move || -> Result<Option<String>, RunnerError> {
             let token = (&sampler.sample(ctx, -1)).clone();
             sampler.accept(token);
-            if runner.model.is_eog_token(token) {
+            if model.is_eog_token(token) {
                 return Ok(None);
             }
             batch.clear();
@@ -395,7 +499,7 @@ impl Iterator for GemmaStream<'_> {
 
             ctx.decode(batch)?;
 
-            let piece = runner.model.token_to_piece(token, decoder, true, None)?;
+            let piece = model.token_to_piece(token, decoder, true, None)?;
             Ok(Some(piece))
         };
         match sample() {
@@ -415,19 +519,36 @@ impl Iterator for GemmaStream<'_> {
     }
 }
 
-impl<'a> GemmaStream<'a> {
+impl<'a, M, R> Gemma3Stream<'a, M, R> {
     fn new(
         source: Result<LlamaContext<'a>, RunnerError>,
-        req: VisionLmRequest,
-        runner: &'a Gemma3Runner,
+        req: RunnerRequest<M>,
+        runner: &'a R,
+        model: &'a LlamaModel,
     ) -> Self {
         Self {
             ctx_source: Some(source),
             ctx: None,
             req,
             runner,
+            model,
             runtime: None,
             done: false,
         }
     }
+}
+
+fn build_hf_api() -> Result<hf_hub::api::tokio::Api, hf_hub::api::tokio::ApiError> {
+    let mut api = ApiBuilder::new()
+        .with_progress(std::io::stdin().is_terminal())
+        .with_token(std::env::var("HF_TOKEN").ok());
+    if let Ok(endpoint) = std::env::var("HF_ENDPOINT") {
+        api = api.with_endpoint(endpoint);
+    }
+    if let Ok(cache) = std::env::var("HF_HOME") {
+        api = api.with_cache_dir(
+            PathBuf::from_str(&cache).expect("HF_HOME env var is not a valid path"),
+        );
+    }
+    api.build()
 }

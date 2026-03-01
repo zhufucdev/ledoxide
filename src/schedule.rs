@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     io::{self, SeekFrom},
+    num::NonZeroU32,
     sync::Arc,
     time::Duration,
 };
@@ -18,12 +19,15 @@ use tokio::{
 };
 
 use crate::{
-    models::Model,
-    runner::{DEFAULT_MODEL_FILENAME, DEFAULT_MODEL_ID, DEFAULT_MULTIMODEL_FILENAME},
+    models::{ModelProducer, TimedModel},
+    task::{self, TaskControlBlock, TaskDescriptor},
 };
 use crate::{
-    models::{ModelManager, ModelProducer},
-    task::{self, TaskControlBlock, TaskDescriptor},
+    models::{TextModel, TextModelProducer, VisionModel, VisionModelProducer},
+    runner::{
+        QWEN_3_VL_4B_GUFF_MODDEL_FILENAME, QWEN_3_VL_4B_GUFF_MODEL_ID,
+        QWEN_3_VL_4B_GUFF_MULTIMODEL_FILENAME,
+    },
 };
 
 struct ScheduleQueues {
@@ -37,9 +41,8 @@ pub struct Scheduler {
     swap_file: Arc<Mutex<File>>,
     max_memory_size: usize,
     max_concurrency: usize,
-    model_manager: Arc<ModelManager>,
-    lm_id: String,
-    vlm_id: String,
+    vlm: Arc<TimedModel<VisionModel>>,
+    lm: Option<Arc<TimedModel<TextModel>>>,
 }
 
 impl Scheduler {
@@ -47,23 +50,16 @@ impl Scheduler {
         max_concurrency: usize,
         max_memory_size: usize,
         model_timeout: Duration,
-        vlm_builder: ModelProducer,
-        lm_builder: ModelProducer,
+        vlm_builder: VisionModelProducer,
+        lm_builder: TextModelProducer,
     ) -> Self {
         Self {
             queues: Default::default(),
             max_memory_size,
             swap_file: Arc::new(Mutex::new(tempfile().map(File::from_std).unwrap())),
             max_concurrency,
-            model_manager: Arc::new(ModelManager::new(
-                model_timeout,
-                HashMap::from([
-                    ("vlm".to_string(), vlm_builder),
-                    ("lm".to_string(), lm_builder),
-                ]),
-            )),
-            lm_id: "lm".to_string(),
-            vlm_id: "vlm".to_string(),
+            vlm: Arc::new(TimedModel::new("vlm", model_timeout, vlm_builder)),
+            lm: Some(Arc::new(TimedModel::new("lm", model_timeout, lm_builder))),
         }
     }
 
@@ -71,19 +67,15 @@ impl Scheduler {
         max_concurrency: usize,
         max_memory_size: usize,
         model_timeout: Duration,
-        vlm_builder: ModelProducer,
+        vlm_builder: VisionModelProducer,
     ) -> Self {
         Self {
             queues: Default::default(),
             max_memory_size,
             swap_file: Arc::new(Mutex::new(tempfile().map(File::from_std).unwrap())),
             max_concurrency,
-            model_manager: Arc::new(ModelManager::new(
-                model_timeout,
-                HashMap::from([("vlm".to_string(), vlm_builder)]),
-            )),
-            lm_id: "vlm".to_string(),
-            vlm_id: "vlm".to_string(),
+            vlm: Arc::new(TimedModel::new("vlm", model_timeout, vlm_builder)),
+            lm: None,
         }
     }
 
@@ -110,15 +102,14 @@ impl Scheduler {
         for _ in 0..self.max_concurrency - active_queue.len() {
             if let Some((tcb, descriptor)) = pending_queue.pop() {
                 tcb.set_state(task::State::Running);
-                let mm = self.model_manager.clone();
+                let (vlm, lm) = (self.vlm.clone(), self.lm.clone());
                 let queues = self.queues.clone();
                 let swap_file = self.swap_file.clone();
                 let max_memory_size = self.max_memory_size;
-                let (lm_id, vlm_id) = (self.lm_id.clone(), self.vlm_id.clone());
                 active_queue.push((
                     tcb.clone(),
                     tokio::spawn(async move {
-                        let job = descriptor.run(mm.as_ref(), vlm_id, lm_id).await;
+                        let job = descriptor.run(&vlm, lm.as_deref()).await;
                         tcb.set_state(task::State::Finished(
                             match job {
                                 Ok(bill) => Ok(task::Success(bill)),
@@ -238,23 +229,29 @@ impl Default for Scheduler {
     }
 }
 
-pub async fn default_vlm_model() -> anyhow::Result<Model> {
-    Model::default().await.map_err(|err| anyhow::anyhow!(err))
-}
-
-pub async fn default_lm_model() -> anyhow::Result<Model> {
-    default_vlm_model().await
-}
-
 const GEMMA_3_12B_GUFF_MODEL_ID: &str = "google/gemma-3-12b-it-qat-q4_0-gguf";
 const GEMMA_3_12B_GUFF_MODEL_FILENAME: &str = "gemma-3-12b-it-q4_0.gguf";
 const GEMMA_3_12B_GUFF_MULTIMODEL_FILENAME: &str = "mmproj-model-f16-12B.gguf";
+const GEMMA_3_12B_CTX_SIZE: u32 = 10240;
 
-pub async fn large_vlm_model() -> anyhow::Result<Model> {
-    Model::new(
+pub async fn default_vlm_model() -> anyhow::Result<VisionModel> {
+    VisionModel::default()
+        .await
+        .map_err(|err| anyhow::anyhow!(err))
+}
+
+pub async fn default_lm_model() -> anyhow::Result<TextModel> {
+    TextModel::default()
+        .await
+        .map_err(|err| anyhow::anyhow!(err))
+}
+
+pub async fn large_vlm_model() -> anyhow::Result<VisionModel> {
+    VisionModel::new(
         GEMMA_3_12B_GUFF_MODEL_ID,
         GEMMA_3_12B_GUFF_MODEL_FILENAME,
         GEMMA_3_12B_GUFF_MULTIMODEL_FILENAME,
+        GEMMA_3_12B_CTX_SIZE.try_into().unwrap(),
     )
     .await
     .map_err(|err| anyhow::anyhow!(err))
@@ -264,7 +261,8 @@ fn offline_model(
     repo_id: &str,
     model_filename: &str,
     multimodel_filename: &str,
-) -> anyhow::Result<Model> {
+    ctx_size: NonZeroU32,
+) -> anyhow::Result<VisionModel> {
     let hf_cache = std::env::var("HF_HOME")
         .map(|name| hf_hub::Cache::new(name.into()))
         .unwrap_or_else(|_| hf_hub::Cache::default());
@@ -272,30 +270,33 @@ fn offline_model(
     log::debug!(target: "schedule",
         "offline model repo: {model_repo:?}, model_filename: {model_filename}, multimodel_filename: {multimodel_filename}");
 
-    Model::from_files(
+    VisionModel::from_files(
         model_repo.get(model_filename).ok_or(anyhow::anyhow!(
             "Model is not cached while running in offline mode"
         ))?,
         model_repo.get(multimodel_filename).ok_or(anyhow::anyhow!(
             "Multimodel is not cached while running in offline mode"
         ))?,
+        ctx_size,
     )
     .map_err(|err| anyhow::anyhow!(err))
 }
 
-pub async fn offline_large_vlm_model() -> anyhow::Result<Model> {
+pub async fn offline_large_vlm_model() -> anyhow::Result<VisionModel> {
     offline_model(
         GEMMA_3_12B_GUFF_MODEL_ID,
         GEMMA_3_12B_GUFF_MODEL_FILENAME,
         GEMMA_3_12B_GUFF_MULTIMODEL_FILENAME,
+        128_000.try_into().unwrap(),
     )
 }
 
-pub async fn offline_vlm_model() -> anyhow::Result<Model> {
+pub async fn offline_vlm_model() -> anyhow::Result<VisionModel> {
     offline_model(
-        DEFAULT_MODEL_ID,
-        DEFAULT_MODEL_FILENAME,
-        DEFAULT_MULTIMODEL_FILENAME,
+        QWEN_3_VL_4B_GUFF_MODEL_ID,
+        QWEN_3_VL_4B_GUFF_MODDEL_FILENAME,
+        QWEN_3_VL_4B_GUFF_MULTIMODEL_FILENAME,
+        32_768.try_into().unwrap(),
     )
 }
 

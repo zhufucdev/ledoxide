@@ -1,79 +1,78 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, fmt::Display, sync::Arc, time::Duration};
 
+use anyhow::Ok;
 use futures::future::BoxFuture;
 use tokio::{
     sync::{Mutex, RwLock},
     task::JoinHandle,
 };
 
-use crate::runner::Gemma3Runner;
+use crate::runner::{Gemma3TextRunner, Gemma3VisionRunner};
 
-pub type Model = Gemma3Runner;
-
-pub struct ModelProducer(
+pub struct ModelProducer<Model>(
     Box<dyn Fn() -> BoxFuture<'static, anyhow::Result<Model>> + Send + Sync>,
 );
+pub type VisionModel = Gemma3VisionRunner;
+pub type TextModel = Gemma3TextRunner;
+pub type VisionModelProducer = ModelProducer<VisionModel>;
+pub type TextModelProducer = ModelProducer<TextModel>;
 
 /// unloads the model when not in use
-pub struct ModelManager {
+pub struct TimedModel<Model> {
+    name: String,
     timeout: Duration,
-    cache: Arc<RwLock<HashMap<String, Arc<Model>>>>,
-    timeout_jobs: Arc<Mutex<HashMap<String, JoinHandle<()>>>>,
-    model_builders: Arc<RwLock<HashMap<String, ModelProducer>>>,
+    cache: Arc<RwLock<Option<Arc<Model>>>>,
+    timeout_job: RwLock<Option<JoinHandle<()>>>,
+    builder: ModelProducer<Model>,
 }
 
-impl ModelManager {
-    pub fn new(timeout: Duration, model_builders: HashMap<String, ModelProducer>) -> Self {
+impl<Model> TimedModel<Model> {
+    pub fn new(name: impl ToString, timeout: Duration, builder: ModelProducer<Model>) -> Self {
         Self {
+            name: name.to_string(),
             timeout,
-            cache: Arc::new(RwLock::new(HashMap::with_capacity(model_builders.len()))),
-            timeout_jobs: Default::default(),
-            model_builders: Arc::new(RwLock::new(model_builders)),
+            cache: Arc::new(RwLock::new(None)),
+            timeout_job: RwLock::new(None),
+            builder,
         }
     }
+}
 
-    pub async fn get_model(
-        &self,
-        model_id: impl AsRef<str>,
-    ) -> Result<Option<Arc<Model>>, anyhow::Error> {
-        if let Some(timeout_job) = self.timeout_jobs.lock().await.get(model_id.as_ref()) {
-            log::debug!(target: "model manager", "aborting timeout job for {}", model_id.as_ref());
+impl<Model> TimedModel<Model>
+where
+    Model: Send + Sync + 'static,
+{
+    pub async fn get_model(&self) -> anyhow::Result<Arc<Model>> {
+        if let Some(timeout_job) = self.timeout_job.write().await.take() {
+            log::debug!(target: "model manager", "aborting timeout job for {}", self.name);
             timeout_job.abort();
         }
-        self.add_timeout_job(model_id.as_ref()).await;
-        if let Some(cached) = self.cache.read().await.get(model_id.as_ref()) {
-            log::debug!(target: "model manager", "cache hit for model {}", model_id.as_ref());
-            return Ok(Some(cached.clone()));
+        self.add_timeout_job().await;
+        if let Some(cached) = self.cache.read().await.as_ref() {
+            log::debug!(target: "model manager", "cache hit for model {}", self.name);
+            return Ok(cached.clone());
         }
-        log::debug!(target: "model manager", "cache missed, building model {}", model_id.as_ref());
-        let model_builders = self.model_builders.read().await;
-        let Some(builder) = model_builders.get(model_id.as_ref()) else {
-            return Ok(None);
-        };
-        let model = Arc::<Model>::new(builder.0().await?);
-        self.cache
-            .write()
-            .await
-            .insert(model_id.as_ref().to_string(), model.clone());
-        Ok(Some(model.clone()))
+        log::debug!(target: "model manager", "cache missed, building model {}", self.name);
+        let model = Arc::new(self.builder.0().await?);
+        *self.cache.write().await = Some(model.clone());
+        Ok(model.clone())
     }
 
-    async fn add_timeout_job(&self, model_id: impl AsRef<str>) {
+    async fn add_timeout_job(&self) {
         let timeout = self.timeout.clone();
-        let model_id = model_id.as_ref().to_string();
         let cache = self.cache.clone();
-        self.timeout_jobs.lock().await.insert(
-            model_id.clone(),
-            tokio::task::spawn(async move {
+        self.timeout_job
+            .write()
+            .await
+            .replace(tokio::task::spawn(async move {
                 tokio::time::sleep(timeout).await;
-                log::debug!(target: "model manager", "dropping model {}", model_id);
-                cache.write().await.remove(model_id.as_str());
-            }),
-        );
+                log::debug!(target: "timed model", "dropping model");
+                *cache.write().await = None;
+            }));
     }
 }
 
-impl ModelProducer {
+impl<Model> ModelProducer<Model> {
     pub fn new<F, Fut>(f: F) -> Self
     where
         F: Fn() -> Fut + Send + Sync + 'static,
