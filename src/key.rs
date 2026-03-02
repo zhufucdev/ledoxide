@@ -33,7 +33,7 @@ impl FromRequestParts<AppState> for ValidKey {
 
 pub fn generate_random_key() -> String {
     let mut rng: StdRng = rand::make_rng();
-    const DICT: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_(";
+    const DICT: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
     String::from_utf8(
         (0..=32)
             .map(|_| DICT[rng.random::<i32>() as usize % DICT.len()])
