@@ -554,7 +554,8 @@ impl<'a, M, R> Gemma3Stream<'a, M, R> {
 fn build_hf_api() -> Result<hf_hub::api::tokio::Api, hf_hub::api::tokio::ApiError> {
     let mut api = ApiBuilder::new()
         .with_progress(std::io::stdin().is_terminal())
-        .with_token(std::env::var("HF_TOKEN").ok());
+        .with_token(std::env::var("HF_TOKEN").ok())
+        .with_chunk_size(Some(2 << 28));
     if let Ok(endpoint) = std::env::var("HF_ENDPOINT") {
         api = api.with_endpoint(endpoint);
     }
