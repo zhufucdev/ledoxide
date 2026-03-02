@@ -124,6 +124,7 @@ impl Scheduler {
                         {
                             let (tcb, _) = active_queue.remove(index);
                             queues.finished.lock().await.push(tcb);
+                            drop(active_queue);
 
                             tokio::time::sleep(Duration::from_secs(10)).await;
                             if let Err(err) = queues.move_inactive_to_swap(&mut *swap_file.lock().await, max_memory_size).await {
