@@ -4,8 +4,7 @@ use std::{
     num::NonZeroU32,
     path::{Path, PathBuf},
     str::FromStr,
-    sync::LazyLock,
-    usize,
+    sync::{Arc, LazyLock},
 };
 
 use encoding_rs::{Decoder, UTF_8};
@@ -18,12 +17,13 @@ use llama_cpp_2::{
     model::{AddBos, LlamaChatMessage, LlamaChatTemplate, LlamaModel},
     mtmd::{self, MtmdBitmap, MtmdContext, MtmdInputText},
     sampling::LlamaSampler,
+    token::LlamaToken,
 };
 use strum::Display;
 
 use crate::{
     error::{CreateLlamaCppRunnerError, RunnerError},
-    sample::{LlguidanceSamplingParams, SimpleSamplingParams},
+    sample::{self, LlguidanceSamplingParams, SimpleSamplingParams},
 };
 
 pub const QWEN_3_VL_4B_GUFF_MODEL_ID: &str = "Qwen/Qwen3-VL-4B-Instruct-GGUF";
@@ -49,6 +49,7 @@ pub struct RunnerRequest<M> {
     pub sampling: SimpleSamplingParams,
     pub llguidance: Option<LlguidanceSamplingParams>,
     pub max_seq: usize,
+    pub prefill: Option<String>,
 }
 
 impl<M> Default for RunnerRequest<M> {
@@ -58,6 +59,7 @@ impl<M> Default for RunnerRequest<M> {
             sampling: Default::default(),
             llguidance: None,
             max_seq: usize::MAX,
+            prefill: None,
         }
     }
 }
@@ -282,6 +284,7 @@ impl From<TextLmRequest> for VisionLmRequest {
             sampling: value.sampling,
             llguidance: value.llguidance,
             max_seq: value.max_seq,
+            prefill: value.prefill,
         }
     }
 }
@@ -506,33 +509,56 @@ where
         // Sample response token
         let ctx = self.ctx.as_mut().unwrap();
         let model = self.model;
-        let step_copy = step.clone();
-        let mut sample = move || -> Result<Option<String>, RunnerError> {
-            let token = (&sampler.sample(ctx, -1)).clone();
+        let sample_idx = batch.n_tokens() - 1;
+        let mut sample = |token: LlamaToken,
+                          sampler: &mut LlamaSampler,
+                          ctx: &mut LlamaContext<'a>,
+                          step: usize|
+         -> Result<Option<String>, RunnerError> {
             sampler.accept(token);
             if model.is_eog_token(token) {
                 return Ok(None);
             }
             batch.clear();
-            batch.add(token, *n_past + (step_copy as i32), &[0], true)?;
+            batch.add(token, *n_past + (step as i32), &[0], true)?;
 
             ctx.decode(batch)?;
 
             let piece = model.token_to_piece(token, decoder, true, None)?;
             Ok(Some(piece))
         };
-        match sample() {
-            Ok(Some(piece)) => {
+        if let Some(prefill) = self.req.prefill.take() {
+            log::debug!(target: "gemma", "prefill: {}", prefill);
+            let tokens = match model.str_to_token(&prefill, AddBos::Never) {
+                Ok(tokens) => tokens,
+                Err(err) => {
+                    return Some(Err(err.into()));
+                }
+            };
+            log::debug!(target: "gemma", "prefill tokens: {:?}", tokens.iter().map(|t| t.0).collect::<Vec<_>>());
+            for token in tokens {
+                match sample(token, sampler, ctx, *step) {
+                    Ok(_) => {}
+                    Err(err) => return Some(Err(err.into())),
+                }
                 *step += 1;
-                return Some(Ok(piece));
             }
-            Ok(None) => {
-                self.done = true;
-                return None;
-            }
-            Err(err) => {
-                self.done = true;
-                return Some(Err(err));
+            Some(Ok(prefill))
+        } else {
+            let token = sampler.sample(ctx, sample_idx);
+            match sample(token, sampler, ctx, *step) {
+                Ok(Some(piece)) => {
+                    *step += 1;
+                    return Some(Ok(piece));
+                }
+                Ok(None) => {
+                    self.done = true;
+                    return None;
+                }
+                Err(err) => {
+                    self.done = true;
+                    return Some(Err(err));
+                }
             }
         }
     }

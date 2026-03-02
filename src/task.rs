@@ -97,6 +97,7 @@ impl TaskDescriptor {
                 schema: LlguidanceSchema::Lark,
                 data: include_str!("../constraint/note_taking.lark").to_string(),
             }),
+            prefill: Some("Summary".to_string()),
             ..Default::default()
         };
         if let Some(sampling) = &self.lm_sampling {
@@ -171,6 +172,7 @@ impl TaskDescriptor {
                 )
                 .to_string(),
             }),
+            prefill: Some("Category".to_string()),
             ..Default::default()
         };
         if let Some(sampling) = &self.lm_sampling {
