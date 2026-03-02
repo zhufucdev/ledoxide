@@ -1,4 +1,5 @@
 use std::{
+    env,
     io::IsTerminal,
     num::NonZeroU32,
     path::{Path, PathBuf},
@@ -170,7 +171,12 @@ pub struct Gemma3VisionRunner {
     ctx_size: NonZeroU32,
 }
 
-static LLAMA_BACKEND: LazyLock<LlamaBackend> = LazyLock::new(|| LlamaBackend::init().unwrap());
+static LLAMA_BACKEND: LazyLock<LlamaBackend> = LazyLock::new(|| {
+    llama_cpp_2::send_logs_to_tracing(llama_cpp_2::LogOptions::default().with_logs_enabled(
+        env::var("RUST_LOG").map_or(false, |lvl| lvl.to_lowercase() == "debug"),
+    ));
+    LlamaBackend::init().unwrap()
+});
 
 impl Gemma3VisionRunner {
     pub async fn new(
