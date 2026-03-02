@@ -5,10 +5,3 @@ Extract final amount of payment from the following text
 <text>
 {1}
 </text>
-
-Mandatory response format:
-```
-Reasoning:
-[multiline text]
-Final amount: [number]
-```

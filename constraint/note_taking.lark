@@ -1,2 +1,4 @@
-start: "Reasoning:\n" text+ "\nNotes:" text+
-text: /./ | "\n"
+start: "Summary: " TEXT
+
+TEXT: /.+/
+

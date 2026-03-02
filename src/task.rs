@@ -71,15 +71,23 @@ impl TaskDescriptor {
         };
         log::debug!(target: "task runner", "description: {}", description);
 
-        let get_lm_response = async |request| -> Result<String, RunTaskError> {
-            if let Some(lm) = lm {
-                let model = lm.get_model().await?;
-                Ok(model.get_lm_response(request)?)
-            } else {
-                let model = vlm.get_model().await?;
-                Ok(model.get_lm_response(request)?)
-            }
-        };
+        if let Some(lm) = lm {
+            let model = lm.get_model().await?;
+            self.run_with_description(model.as_ref(), &description)
+        } else {
+            let model = vlm.get_model().await?;
+            self.run_with_description(model.as_ref(), &description)
+        }
+    }
+
+    fn run_with_description<'a, LM>(
+        &self,
+        lm: &'a LM,
+        description: &str,
+    ) -> Result<Bill, RunTaskError>
+    where
+        LM: TextLmRunner<'a> + Send + Sync + 'static,
+    {
         let mut request = TextLmRequest {
             messages: vec![(
                 MessageRole::User,
@@ -95,15 +103,14 @@ impl TaskDescriptor {
             request.sampling = sampling.clone();
         }
 
-        let notes = get_lm_response(request).await?;
-        log::debug!(target: "task runner", "{}", notes);
+        let notes = lm.get_lm_response(request)?;
+        let notes = notes.trim();
+        log::debug!(target: "lm", "{}", notes);
         let notes = notes
-            .rsplit_once("\n")
+            .split_once(":")
             .ok_or(RunTaskError::InvalidOutput("notes".to_string()))?
             .1
-            .split_once(": ")
-            .ok_or(RunTaskError::InvalidOutput("notes".to_string()))?
-            .1
+            .trim_start()
             .to_string();
         log::debug!(target: "task runner", "notes: {}", notes);
         let mut request = TextLmRequest {
@@ -123,20 +130,21 @@ impl TaskDescriptor {
         if let Some(sampling) = &self.lm_sampling {
             request.sampling = sampling.clone();
         }
-        let response = get_lm_response(request).await?;
-        log::debug!(target: "task runner", "amount: {}", response);
+        let response = lm.get_lm_response(request)?;
+        log::debug!(target: "lm", "{}", response);
         let numeric = Regex::new(r#"([0-9,]+\.?[0-9]{0,})"#).unwrap();
-        let amount = numeric.captures(response.rsplit_once("\n").unwrap().1);
-        let amount: f32 = if let Some(amount) = amount {
+        let amount: f32 = if let Some(amount) = numeric.captures(&response) {
             amount
                 .get(1)
-                .unwrap()
+                .ok_or(RunTaskError::InvalidOutput("amount extraction".to_string()))?
                 .as_str()
                 .parse()
                 .map_err(|_| RunTaskError::EmptyAmount(response.clone()))?
         } else {
             return Err(RunTaskError::EmptyAmount(response));
         };
+        log::debug!(target: "task runner", "amount: {}", amount);
+
         let mut request = TextLmRequest {
             messages: vec![(
                 MessageRole::User,
@@ -157,7 +165,7 @@ impl TaskDescriptor {
                     include_str!("../constraint/categorization.lark"),
                     Category::all_cases()
                         .iter()
-                        .map(|c| c.name())
+                        .map(|c| format!(r#""{}""#, c.name()))
                         .collect::<Vec<_>>()
                         .join("|")
                 )
@@ -168,15 +176,15 @@ impl TaskDescriptor {
         if let Some(sampling) = &self.lm_sampling {
             request.sampling = sampling.clone();
         }
-        let response = get_lm_response(request).await?;
-        log::debug!(target: "task runner", "category: {}", response);
-        let category = response
-            .rsplit_once("\n")
-            .ok_or(RunTaskError::InvalidOutput("category".to_string()))?
-            .1
-            .split_once(" ")
-            .ok_or(RunTaskError::InvalidOutput("category".to_string()))?
-            .1;
+        let response = lm.get_lm_response(request)?;
+        log::debug!(target: "lm", "{}", response);
+        let extract_category = Regex::new(r#"Category: (.+)"#).unwrap();
+        let category = extract_category
+            .captures(&response)
+            .ok_or(RunTaskError::InvalidOutput("categorization".to_string()))?
+            .get(1)
+            .unwrap()
+            .as_str();
 
         Ok(Bill {
             notes,
@@ -370,7 +378,6 @@ impl<'de> Deserialize<'de> for TaskControlBlock {
 #[cfg(test)]
 mod tests {
     use std::{path::PathBuf, str::FromStr};
-
     use tokio::fs;
 
     use crate::schedule;
@@ -380,25 +387,23 @@ mod tests {
     #[tokio::test]
     async fn test_lm() {
         pretty_env_logger::init();
+        Category::load_from_names(["Shopping", "Food", "Transport", "Rent"]);
+
         let lm = schedule::default_lm_model().await.unwrap();
         log::debug!("model building finished");
-        let description = r#"description: - In the top bar, there is no header text, indicating this image is a screenshot of a social media post or listing, telling the user an incoming sale of a vivo X200 Ultra smartphone.
-- For main content, there are several items, including a collage of nine images showing the vivo X200 Ultra from various angles (back, side, front, and held in hand), with text overlays identifying the model and featuring the Zeiss logo, and a final image showing the phone's screen displaying a sales page with Chinese text.
-- For bottom section, there is a text block in pink font indicating the item is for sale with hashtags, contact information (T.), price (21888), and a description of the phone's condition (16+512GB, suspected replacement screen with a minor gap, but all functions normal, with official warranty still valid for over a month).
-- The bill is originally not specified, and is discounted by not specified, bringing the final amount to 21888."#;
-        let request = TextLmRequest {
-            messages: vec![(
-                MessageRole::User,
-                format!(include_str!("../prompt/note_taking.md"), description),
-            )],
-            llguidance: Some(LlguidanceSamplingParams {
-                schema: LlguidanceSchema::Lark,
-                data: include_str!("../constraint/note_taking.lark").to_string(),
-            }),
-            ..Default::default()
+        let description = r#"- In the top bar, there is no header text, indicating this image is a screenshot of a social media post, telling the user an inco
+ming purchase of a vivo X200promini phone
+- For main content, there are several items, including six photos of a gray vivo phone from different angles, a text block with hashtags and product details, an
+d a post count
+- For bottom section, there is a comment section with a "Leave a Comment" button, indicating the user can interact with the post
+- The purchase is originally 2188, and is discounted by 0 bringing the final amount to 2188"#;
+        let req = TaskDescriptor {
+            image_buf: Vec::new(),
+            lm_sampling: None,
+            vlm_sampling: None,
         };
-        let response: String = lm.get_lm_response(request).unwrap();
-        log::info!(target: "lm", "{}", response);
+        let bill = req.run_with_description(&lm, description).unwrap();
+        log::info!("{:?}", bill);
     }
 
     #[tokio::test]

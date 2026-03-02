@@ -8,10 +8,3 @@ Extract the best matching category from text
 <categories>
 {2}
 </categories>
-
-Mandatory response format:
-```
-Reasoning:
-[multiline text]
-Category: [single line text]
-```

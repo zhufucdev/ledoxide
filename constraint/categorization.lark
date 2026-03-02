@@ -1,4 +1,5 @@
-start: "Reasoning:\n" text+ "\nCategory: " name
+start: CATEGORY_LABEL " " name
 
-text: /./ | "\n"
-name: /{0}/
+name: {0}
+CATEGORY_LABEL: "Category:"
+
