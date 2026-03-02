@@ -14,7 +14,7 @@ use llama_cpp_2::{
     context::{LlamaContext, params::LlamaContextParams},
     llama_backend::LlamaBackend,
     llama_batch::LlamaBatch,
-    model::{LlamaChatMessage, LlamaChatTemplate, LlamaModel},
+    model::{AddBos, LlamaChatMessage, LlamaChatTemplate, LlamaModel},
     mtmd::{self, MtmdBitmap, MtmdContext, MtmdInputText},
     sampling::LlamaSampler,
 };
@@ -398,7 +398,7 @@ impl PrepareRun for Gemma3Stream<'_, ImageOrText, Gemma3VisionRunner> {
 
 impl PrepareRun for Gemma3Stream<'_, String, Gemma3TextRunner> {
     fn prepare(&mut self) -> Result<(), RunnerError> {
-        // Preprocess the message, flattening media
+        // Preprocess the message
         let media_marker = mtmd::mtmd_default_marker();
         let messages = self
             .req
@@ -431,12 +431,20 @@ impl PrepareRun for Gemma3Stream<'_, String, Gemma3TextRunner> {
             self.runner
                 .model
                 .apply_chat_template(&self.runner.chat_template, &messages, true)?;
+        let token_list = self.model.str_to_token(&formatted_prompt, AddBos::Always)?;
+        let mut batch = LlamaBatch::new(self.runner.ctx_size.get() as usize, 1);
+        let token_list_len = token_list.len();
+        for (i, token) in token_list.into_iter().enumerate() {
+            batch.add(token, i as i32, &[0], i == token_list_len - 1)?;
+        }
+        self.ctx.as_mut().unwrap().decode(&mut batch)?;
+
         // Generate preparation
         let mut preparation = Runtime {
             sampler: self.req.sampling.to_llama(),
             decoder: UTF_8.new_decoder(),
-            batch: LlamaBatch::new(self.runner.ctx_size.get() as usize, 1),
-            n_past: 0,
+            batch,
+            n_past: token_list_len as i32,
             step: 0,
         };
         if let Some(llguidance) = &self.req.llguidance {

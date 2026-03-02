@@ -12,7 +12,7 @@ use crate::{
     bill::{Bill, Category},
     error::{CreateTaskError, RunTaskError},
     key,
-    models::{TimedModel},
+    models::TimedModel,
     runner::{
         ImageOrText, MessageRole, TextLmRequest, TextLmRunner, TextLmRunnerExt, VisionLmRequest,
         VisionLmRunner, VisionLmRunnerExt,
@@ -96,15 +96,16 @@ impl TaskDescriptor {
         }
 
         let notes = get_lm_response(request).await?;
-        log::debug!(target: "task runner", "notes: {}", notes);
+        log::debug!(target: "task runner", "{}", notes);
         let notes = notes
             .rsplit_once("\n")
-            .unwrap()
+            .ok_or(RunTaskError::InvalidOutput("notes".to_string()))?
             .1
             .split_once(": ")
-            .unwrap()
+            .ok_or(RunTaskError::InvalidOutput("notes".to_string()))?
             .1
             .to_string();
+        log::debug!(target: "task runner", "notes: {}", notes);
         let mut request = TextLmRequest {
             messages: vec![(
                 MessageRole::User,
@@ -171,10 +172,10 @@ impl TaskDescriptor {
         log::debug!(target: "task runner", "category: {}", response);
         let category = response
             .rsplit_once("\n")
-            .unwrap()
+            .ok_or(RunTaskError::InvalidOutput("category".to_string()))?
             .1
             .split_once(" ")
-            .unwrap()
+            .ok_or(RunTaskError::InvalidOutput("category".to_string()))?
             .1;
 
         Ok(Bill {

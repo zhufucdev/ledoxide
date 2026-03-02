@@ -13,16 +13,15 @@ pub struct SimpleSamplingParams {
 impl SimpleSamplingParams {
     pub fn to_llama(&self) -> LlamaSampler {
         let mut samplers = Vec::new();
-        samplers.push(LlamaSampler::dist(
-            self.seed.unwrap_or_else(|| rand::random()),
-        ));
         if let Some(k) = self.top_k {
             samplers.push(LlamaSampler::top_k(k));
         }
         if let Some(p) = self.top_p {
             samplers.push(LlamaSampler::top_p(p, 8));
         }
-        samplers.push(LlamaSampler::greedy());
+        samplers.push(LlamaSampler::dist(
+            self.seed.unwrap_or_else(|| rand::random()),
+        ));
         LlamaSampler::chain_simple(samplers)
     }
 }

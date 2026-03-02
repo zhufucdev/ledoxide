@@ -3,7 +3,7 @@ use axum_extra::typed_header::TypedHeaderRejection;
 use image::ImageError;
 use llama_cpp_2::{
     ApplyChatTemplateError, ChatTemplateError, DecodeError, GrammarError, LlamaContextLoadError,
-    LlamaModelLoadError, TokenToStringError,
+    LlamaModelLoadError, StringToTokenError, TokenToStringError,
     llama_batch::BatchAddError,
     mtmd::{MtmdEvalError, MtmdInitError, MtmdTokenizeError},
 };
@@ -82,6 +82,8 @@ pub enum RunTaskError {
     EmptyAmount(String),
     #[error("invalid image in request: {0}")]
     InvalidInputImage(#[from] ImageError),
+    #[error("invalid LLM output for {0}")]
+    InvalidOutput(String),
 }
 
 #[derive(Debug, Error)]
@@ -95,7 +97,9 @@ pub enum RunnerError {
     #[error("mtmd tokenize: {0}")]
     MtmdTokenize(#[from] MtmdTokenizeError),
     #[error("token-string conversion: {0}")]
-    RunTask(#[from] TokenToStringError),
+    TokenToString(#[from] TokenToStringError),
+    #[error("string-token conversion: {0}")]
+    StringToToken(#[from] StringToTokenError),
     #[error("batch add: {0}")]
     BatchAdd(#[from] BatchAddError),
     #[error("mtmd eval: {0}")]
