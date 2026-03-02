@@ -64,18 +64,22 @@
               with pkgs;
               [
                 rustToolchain
+                rustPlatform.bindgenHook
+                cmake
                 openssl
                 pkg-config
                 cargo-deny
                 cargo-edit
                 cargo-watch
                 rust-analyzer
+                openssl
                 addDriverRunpath
               ]
               ++ lib.optionals stdenv.isLinux [
                 cudaPackages.cudatoolkit
                 cudaPackages.cuda_nvcc
                 cudaPackages.cuda_cudart
+                cudaPackages.libcublas
               ];
 
             env = {
@@ -86,10 +90,15 @@
               CUDA_PATH = "${pkgs.cudaPackages.cudatoolkit}";
               CUDA_COMPUTE_CAP = "89";
               CUDATKDIR = "${pkgs.cudaPackages.cudatoolkit}";
+              LIBRARY_PATH = lib.strings.join ":" [
+                "${pkgs.cudaPackages.cudatoolkit}/lib/stubs"
+              ];
               LD_LIBRARY_PATH = lib.makeLibraryPath [
                 pkgs.stdenv.cc.cc.lib.lib
                 pkgs.addDriverRunpath.driverLink
+                pkgs.openssl.out
               ];
+              RUSTFLAGS = "-L ${pkgs.cudaPackages.cuda_cudart}/lib -L ${pkgs.cudaPackages.libcublas.static}/lib";
             };
           };
         }
