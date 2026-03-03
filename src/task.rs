@@ -1,9 +1,12 @@
 use std::sync::{Arc, RwLock};
 
+use anyhow::{Context, anyhow};
 use axum::{
     RequestExt,
+    body::Bytes,
     extract::{FromRequest, Multipart},
 };
+use encoding_rs::UTF_8;
 use regex::Regex;
 use serde::{Deserialize, Serialize, ser::SerializeStruct};
 use strum::Display;
@@ -203,31 +206,41 @@ where
     type Rejection = CreateTaskError;
 
     async fn from_request(req: axum::extract::Request, _: &S) -> Result<Self, Self::Rejection> {
-        let mut form: Multipart = req.extract().await?;
+        let content_type = UTF_8
+            .decode(req.headers().get("Content-Type").unwrap().as_bytes())
+            .0;
+        log::debug!("receiving {}", content_type);
+
         let mut image_buf = None;
         let (mut lm_sampling, mut vlm_sampling) = (None, None);
-        while let Some(field) = form.next_field().await? {
-            let name = field.name().unwrap().to_string();
-            match name.as_str() {
-                "image" => {
-                    image_buf = Some(field.bytes().await?.to_vec());
-                }
-                "lm_sampling" | "vlm_sampling" => {
-                    if let Some(mime) = field.content_type()
-                        && mime != "application/json"
-                    {
-                        return Err(CreateTaskError::InvalidField(name.to_string()));
+        if content_type.starts_with("image/") {
+            let buf: Bytes = req.extract().await?;
+            image_buf = Some(buf.to_vec());
+        } else if content_type.starts_with("multipart/form-data") {
+            let mut form: Multipart = req.extract().await?;
+            while let Some(field) = form.next_field().await? {
+                let name = field.name().unwrap().to_string();
+                match name.as_str() {
+                    "image" => {
+                        image_buf = Some(field.bytes().await?.to_vec());
                     }
-                    let value: SimpleSamplingParams =
-                        serde_json::from_str(field.text().await?.as_str())?;
-                    if name.starts_with("lm") {
-                        lm_sampling = Some(value)
-                    } else {
-                        vlm_sampling = Some(value)
+                    "lm_sampling" | "vlm_sampling" => {
+                        if let Some(mime) = field.content_type()
+                            && mime != "application/json"
+                        {
+                            return Err(CreateTaskError::InvalidField(name.to_string()));
+                        }
+                        let value: SimpleSamplingParams =
+                            serde_json::from_str(field.text().await?.as_str())?;
+                        if name.starts_with("lm") {
+                            lm_sampling = Some(value)
+                        } else {
+                            vlm_sampling = Some(value)
+                        }
                     }
-                }
-                _ => {
-                    return Err(CreateTaskError::UnknownField(name.to_string()));
+                    _ => {
+                        return Err(CreateTaskError::UnknownField(name.to_string()));
+                    }
                 }
             }
         }

@@ -1,6 +1,7 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
+    handler::Handler,
     routing::{get, post},
 };
 use clap::Parser;
@@ -43,7 +44,10 @@ async fn main() {
 fn app(args: &args::App) -> axum::Router {
     axum::Router::new()
         .route("/", get(index))
-        .route("/create_task", post(create_task))
+        .route(
+            "/create_task",
+            post(create_task).layer(DefaultBodyLimit::disable()),
+        )
         .route("/get_task/{task_id}", get(get_task))
         .with_state(AppState::new(args))
 }
