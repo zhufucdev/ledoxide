@@ -401,7 +401,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_lm() {
-        pretty_env_logger::init();
+        _ = pretty_env_logger::try_init();
         Category::load_from_names(["Shopping", "Food", "Transport", "Rent"]);
 
         let lm = schedule::default_lm_model().await.unwrap();
@@ -423,7 +423,7 @@ d a post count
 
     #[tokio::test]
     async fn test_vlm() {
-        pretty_env_logger::init();
+        _ = pretty_env_logger::try_init();
         let screenshot_path = PathBuf::from_str(env!("CARGO_MANIFEST_DIR"))
             .unwrap()
             .join("asset/second-hand-horse-screenshot.jpeg");

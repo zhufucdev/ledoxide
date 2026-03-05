@@ -98,7 +98,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_workflow() {
-        pretty_env_logger::init();
+        _ = pretty_env_logger::try_init();
         let auth_key = "WK1wJ5ipiVvSdmdCPqNx8up8qj8GCwbm_";
         Category::load_from_names(["Shopping", "Food", "Transport", "Rent"]);
         fn check_finished_state(success: task::Success) {

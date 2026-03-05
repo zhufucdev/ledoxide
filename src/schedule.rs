@@ -348,7 +348,7 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn test_swap() {
-        pretty_env_logger::init();
+        _ = pretty_env_logger::try_init();
         Category::load_from_names(["No category"]);
         let scheduler = Scheduler::default();
         for i in 0..10 {
