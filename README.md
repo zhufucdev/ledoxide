@@ -76,4 +76,4 @@ The server exposes a simple REST API:
 
 - **Task Removal:** Finished tasks remain in memory or the on-disk swap file indefinitely. There is currently no API to "delete" or "acknowledge" a task to free its disk footprint once retrieved. Over extreme uptimes on busy servers, the swap file could grow continuously.
 - **CUDA Optimization:** Depending on your GPU architecture, the Docker image may trigger a warning about an unsupported `UPSCALE` operator in the `MTL0` backend for CLIP execution, though inference typically falls back gracefully. Flash Attention is enabled by default to mitigate this footprint.
-- **Gemma License:** Attempts to download Gemma 3 would fail without specifying `HF_TOKEN`. You can visit a [Gemma repo](https://huggingface.co/google/gemma-3-4b-it) to see if you have access.
+- **Gated Model:** Attempts to download Gemma 3 would fail without specifying a valid `HF_TOKEN`. You can visit a [Gemma repo](https://huggingface.co/google/gemma-3-4b-it) to see if you have access.
