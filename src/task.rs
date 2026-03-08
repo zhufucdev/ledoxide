@@ -71,13 +71,15 @@ impl TaskDescriptor {
             }
             let runner = vlm.get_model().await?;
             let mut output = runner.get_vlm_response(request)?;
-            output = output.trim().to_string();
             if output.starts_with("<think>") {
                 // strip the <think> tag
                 const END_TAG: &str = "</think>";
                 if let Some(end) = output.find(END_TAG) {
                     output = output.split_off(end + END_TAG.len())
                 }
+            }
+            while output.chars().nth(0).map_or(false, |c| c.is_whitespace()) {
+                output = output.trim_start().to_string();
             }
             output
         };
