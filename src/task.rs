@@ -192,7 +192,7 @@ impl TaskDescriptor {
         }
         let response = lm.get_lm_response(request)?;
         log::debug!(target: "lm", "{}", response);
-        let extract_category = Regex::new(r#"Category: (.+)"#).unwrap();
+        let extract_category = Regex::new(r#"Category: (.+)\.?"#).unwrap();
         let category = extract_category
             .captures(&response)
             .ok_or(RunTaskError::InvalidOutput("categorization".to_string()))?
