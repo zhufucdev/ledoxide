@@ -20,14 +20,14 @@ use tokio::{
 
 use crate::{
     models::{ModelProducer, TimedModel},
-    runner::{GEMMA_3_1B_GUFF_MODEL_FILENAME, GEMMA_3_1B_GUFF_MODEL_ID},
+    runner::{GEMMA_3_1B_GUFF_MODEL_FILENAME, GEMMA_3_1B_GUFF_MODEL_ID, Gemma3VisionRunner},
     task::{self, TaskControlBlock, TaskDescriptor},
 };
 use crate::{
     models::{TextModel, TextModelProducer, VisionModel, VisionModelProducer},
     runner::{
-        QWEN_3_VL_4B_GUFF_MODDEL_FILENAME, QWEN_3_VL_4B_GUFF_MODEL_ID,
-        QWEN_3_VL_4B_GUFF_MULTIMODEL_FILENAME,
+        QWEN_3D5_4B_GUFF_MODDEL_FILENAME, QWEN_3D5_4B_GUFF_MODEL_ID,
+        QWEN_3D5_4B_GUFF_MULTIMODEL_FILENAME,
     },
 };
 
@@ -237,7 +237,7 @@ const GEMMA_3_12B_GUFF_MULTIMODEL_FILENAME: &str = "mmproj-model-f16-12B.gguf";
 const GEMMA_3_12B_CTX_SIZE: u32 = 10240;
 
 pub async fn default_vlm_model() -> anyhow::Result<VisionModel> {
-    VisionModel::default()
+    Gemma3VisionRunner::default()
         .await
         .map_err(|err| anyhow::anyhow!(err))
 }
@@ -249,14 +249,14 @@ pub async fn default_lm_model() -> anyhow::Result<TextModel> {
 }
 
 pub async fn large_vlm_model() -> anyhow::Result<VisionModel> {
-    VisionModel::new(
+    let model = Gemma3VisionRunner::new(
         GEMMA_3_12B_GUFF_MODEL_ID,
         GEMMA_3_12B_GUFF_MODEL_FILENAME,
         GEMMA_3_12B_GUFF_MULTIMODEL_FILENAME,
         GEMMA_3_12B_CTX_SIZE.try_into().unwrap(),
     )
-    .await
-    .map_err(|err| anyhow::anyhow!(err))
+    .await?;
+    Ok(model.into())
 }
 
 fn offline_vision_model(
@@ -272,7 +272,7 @@ fn offline_vision_model(
     log::debug!(target: "schedule",
         "offline model repo: {model_repo:?}, model_filename: {model_filename}, multimodel_filename: {multimodel_filename}");
 
-    VisionModel::from_files(
+    let model = Gemma3VisionRunner::from_files(
         model_repo.get(model_filename).ok_or(anyhow::anyhow!(
             "Model is not cached while running in offline mode"
         ))?,
@@ -280,8 +280,8 @@ fn offline_vision_model(
             "Multimodel is not cached while running in offline mode"
         ))?,
         ctx_size,
-    )
-    .map_err(|err| anyhow::anyhow!(err))
+    )?;
+    Ok(model.into())
 }
 
 fn offline_text_model(
@@ -316,9 +316,9 @@ pub async fn offline_large_vlm_model() -> anyhow::Result<VisionModel> {
 
 pub async fn offline_vlm_model() -> anyhow::Result<VisionModel> {
     offline_vision_model(
-        QWEN_3_VL_4B_GUFF_MODEL_ID,
-        QWEN_3_VL_4B_GUFF_MODDEL_FILENAME,
-        QWEN_3_VL_4B_GUFF_MULTIMODEL_FILENAME,
+        QWEN_3D5_4B_GUFF_MODEL_ID,
+        QWEN_3D5_4B_GUFF_MODDEL_FILENAME,
+        QWEN_3D5_4B_GUFF_MULTIMODEL_FILENAME,
         32_768.try_into().unwrap(),
     )
 }

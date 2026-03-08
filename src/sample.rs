@@ -4,10 +4,10 @@ use strum::Display;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SimpleSamplingParams {
-    top_p: Option<f32>,
-    top_k: Option<i32>,
-    temperature: Option<f32>,
-    seed: Option<u32>,
+    pub top_p: Option<f32>,
+    pub top_k: Option<i32>,
+    pub temperature: Option<f32>,
+    pub seed: Option<u32>,
 }
 
 impl SimpleSamplingParams {

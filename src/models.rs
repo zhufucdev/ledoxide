@@ -4,12 +4,12 @@ use anyhow::Ok;
 use futures::future::BoxFuture;
 use tokio::{sync::RwLock, task::JoinHandle};
 
-use crate::runner::{Gemma3TextRunner, Gemma3VisionRunner};
+use crate::runner::{Gemma3TextRunner, Gemma3VisionRunner, VisionRunnerWithRecommendedSampling};
 
 pub struct ModelProducer<Model>(
     Box<dyn Fn() -> BoxFuture<'static, anyhow::Result<Model>> + Send + Sync>,
 );
-pub type VisionModel = Gemma3VisionRunner;
+pub type VisionModel = VisionRunnerWithRecommendedSampling<Gemma3VisionRunner>;
 pub type TextModel = Gemma3TextRunner;
 pub type VisionModelProducer = ModelProducer<VisionModel>;
 pub type TextModelProducer = ModelProducer<TextModel>;

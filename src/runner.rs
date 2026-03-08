@@ -16,6 +16,7 @@ use llama_cpp_2::{
     llama_batch::LlamaBatch,
     model::{AddBos, LlamaChatMessage, LlamaChatTemplate, LlamaModel},
     mtmd::{self, MtmdBitmap, MtmdContext, MtmdInputText},
+    openai::OpenAIChatTemplateParams,
     sampling::LlamaSampler,
     token::LlamaToken,
 };
@@ -26,9 +27,9 @@ use crate::{
     sample::{self, LlguidanceSamplingParams, SimpleSamplingParams},
 };
 
-pub const QWEN_3_VL_4B_GUFF_MODEL_ID: &str = "Qwen/Qwen3-VL-4B-Instruct-GGUF";
-pub const QWEN_3_VL_4B_GUFF_MODDEL_FILENAME: &str = "Qwen3VL-4B-Instruct-Q4_K_M.gguf";
-pub const QWEN_3_VL_4B_GUFF_MULTIMODEL_FILENAME: &str = "mmproj-Qwen3VL-4B-Instruct-F16.gguf";
+pub const QWEN_3D5_4B_GUFF_MODEL_ID: &str = "unsloth/Qwen3.5-4B-GGUF";
+pub const QWEN_3D5_4B_GUFF_MODDEL_FILENAME: &str = "Qwen3.5-4B-Q4_K_M.gguf";
+pub const QWEN_3D5_4B_GUFF_MULTIMODEL_FILENAME: &str = "mmproj-F16.gguf";
 
 pub const GEMMA_3_1B_GUFF_MODEL_ID: &str = "google/gemma-3-1b-it-qat-q4_0-gguf";
 pub const GEMMA_3_1B_GUFF_MODEL_FILENAME: &str = "gemma-3-1b-it-q4_0.gguf";
@@ -210,14 +211,24 @@ impl Gemma3VisionRunner {
         })
     }
 
-    pub async fn default() -> Result<Self, CreateLlamaCppRunnerError> {
-        Self::new(
-            QWEN_3_VL_4B_GUFF_MODEL_ID,
-            QWEN_3_VL_4B_GUFF_MODDEL_FILENAME,
-            QWEN_3_VL_4B_GUFF_MULTIMODEL_FILENAME,
-            10240u32.try_into().unwrap(),
+    pub async fn default()
+    -> Result<VisionRunnerWithRecommendedSampling<Self>, CreateLlamaCppRunnerError> {
+        let inner = Self::new(
+            QWEN_3D5_4B_GUFF_MODEL_ID,
+            QWEN_3D5_4B_GUFF_MODDEL_FILENAME,
+            QWEN_3D5_4B_GUFF_MULTIMODEL_FILENAME,
+            16384u32.try_into().unwrap(),
         )
-        .await
+        .await?;
+        Ok(VisionRunnerWithRecommendedSampling {
+            inner: inner,
+            default_sampling: SimpleSamplingParams {
+                top_p: Some(0.8f32),
+                top_k: Some(20),
+                temperature: Some(0.7f32),
+                seed: None,
+            },
+        })
     }
 
     pub fn from_files(
@@ -250,15 +261,14 @@ impl Gemma3VisionRunner {
     }
 }
 
-impl<'a> TextLmRunner<'a> for Gemma3VisionRunner {
-    type Response = Gemma3Stream<'a, ImageOrText, Gemma3VisionRunner>;
+impl<'a, T> TextLmRunner<'a> for T
+where
+    T: VisionLmRunner<'a>,
+{
+    type Response = <Self as VisionLmRunner<'a>>::Response;
 
     fn stream_lm_response(&'a self, request: TextLmRequest) -> Self::Response {
-        let request: VisionLmRequest = request.into();
-        let ctx = self
-            .new_context_window()
-            .map_err(|err| RunnerError::from(err));
-        Gemma3Stream::new(ctx, request, self, &self.model)
+        self.stream_vlm_response(request.into())
     }
 }
 
@@ -289,10 +299,10 @@ impl From<TextLmRequest> for VisionLmRequest {
     }
 }
 
-pub struct Gemma3Stream<'a, M, Runner> {
+pub struct Gemma3Stream<'a, Message, Runner> {
     ctx_source: Option<Result<LlamaContext<'a>, RunnerError>>,
     ctx: Option<LlamaContext<'a>>,
-    req: RunnerRequest<M>,
+    req: RunnerRequest<Message>,
     runner: &'a Runner,
     model: &'a LlamaModel,
     runtime: Option<Runtime<'a>>,
@@ -579,6 +589,50 @@ impl<'a, M, R> Gemma3Stream<'a, M, R> {
             model,
             runtime: None,
             done: false,
+        }
+    }
+}
+
+pub struct VisionRunnerWithRecommendedSampling<Inner> {
+    inner: Inner,
+    default_sampling: SimpleSamplingParams,
+}
+
+impl<'a, Inner> VisionRunnerWithRecommendedSampling<Inner> {
+    fn get_preprocessed_simple_sampling(
+        &self,
+        sampling: SimpleSamplingParams,
+    ) -> SimpleSamplingParams {
+        let mut sampling = sampling;
+        if sampling.top_k.is_none() {
+            sampling.top_k = self.default_sampling.top_k;
+        }
+        if sampling.top_p.is_none() {
+            sampling.top_p = self.default_sampling.top_p;
+        }
+        if sampling.temperature.is_none() {
+            sampling.temperature = self.default_sampling.temperature;
+        }
+        sampling
+    }
+}
+
+impl<'a, Inner> VisionLmRunner<'a> for VisionRunnerWithRecommendedSampling<Inner>
+where
+    Inner: TextLmRunner<'a> + VisionLmRunner<'a>,
+{
+    type Response = <Inner as VisionLmRunner<'a>>::Response;
+
+    fn stream_vlm_response(&'a self, request: VisionLmRequest) -> Self::Response {
+        self.inner.stream_vlm_response(request)
+    }
+}
+
+impl<Inner> From<Inner> for VisionRunnerWithRecommendedSampling<Inner> {
+    fn from(value: Inner) -> Self {
+        Self {
+            inner: value,
+            default_sampling: SimpleSamplingParams::default(),
         }
     }
 }
