@@ -20,7 +20,10 @@ use tokio::{
 
 use crate::{
     models::{ModelProducer, TimedModel},
-    runner::{GEMMA_3_1B_GUFF_MODEL_FILENAME, GEMMA_3_1B_GUFF_MODEL_ID, Gemma3VisionRunner},
+    runner::{
+        GEMMA_3_1B_GUFF_MODEL_FILENAME, GEMMA_3_1B_GUFF_MODEL_ID, Gemma3TextRunner,
+        Gemma3VisionRunner, RunnerWithRecommendedSampling,
+    },
     task::{self, TaskControlBlock, TaskDescriptor},
 };
 use crate::{
@@ -243,7 +246,7 @@ pub async fn default_vlm_model() -> anyhow::Result<VisionModel> {
 }
 
 pub async fn default_lm_model() -> anyhow::Result<TextModel> {
-    TextModel::default()
+    Gemma3TextRunner::default()
         .await
         .map_err(|err| anyhow::anyhow!(err))
 }
@@ -296,13 +299,16 @@ fn offline_text_model(
     log::debug!(target: "schedule",
         "offline model repo: {model_repo:?}, model_filename: {model_filename}");
 
-    TextModel::from_file(
+    let inner = Gemma3TextRunner::from_file(
         model_repo.get(model_filename).ok_or(anyhow::anyhow!(
             "Model is not cached while running in offline mode"
         ))?,
         ctx_size,
-    )
-    .map_err(|err| anyhow::anyhow!(err))
+    )?;
+    Ok(RunnerWithRecommendedSampling {
+        inner,
+        default_sampling: Gemma3TextRunner::recommend_sampling(),
+    })
 }
 
 pub async fn offline_large_vlm_model() -> anyhow::Result<VisionModel> {

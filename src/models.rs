@@ -10,7 +10,7 @@ pub struct ModelProducer<Model>(
     Box<dyn Fn() -> BoxFuture<'static, anyhow::Result<Model>> + Send + Sync>,
 );
 pub type VisionModel = RunnerWithRecommendedSampling<Gemma3VisionRunner>;
-pub type TextModel = Gemma3TextRunner;
+pub type TextModel = RunnerWithRecommendedSampling<Gemma3TextRunner>;
 pub type VisionModelProducer = ModelProducer<VisionModel>;
 pub type TextModelProducer = ModelProducer<TextModel>;
 

@@ -128,13 +128,27 @@ impl Gemma3TextRunner {
         Self::from_file(repo.get(model_file.as_ref()).await?, ctx_size)
     }
 
-    pub async fn default() -> Result<Self, CreateLlamaCppRunnerError> {
-        Self::new(
+    pub async fn default() -> Result<RunnerWithRecommendedSampling<Self>, CreateLlamaCppRunnerError>
+    {
+        let inner = Self::new(
             GEMMA_3_1B_GUFF_MODEL_ID,
             GEMMA_3_1B_GUFF_MODEL_FILENAME,
             32_000.try_into().unwrap(),
         )
-        .await
+        .await?;
+        Ok(RunnerWithRecommendedSampling {
+            inner,
+            default_sampling: Self::recommend_sampling(),
+        })
+    }
+
+    pub fn recommend_sampling() -> SimpleSamplingParams {
+        SimpleSamplingParams {
+            top_p: Some(0.95f32),
+            top_k: Some(64),
+            temperature: Some(1f32),
+            ..Default::default()
+        }
     }
 
     pub fn from_file(
@@ -593,8 +607,8 @@ impl<'a, M, R> Gemma3Stream<'a, M, R> {
 }
 
 pub struct RunnerWithRecommendedSampling<Inner> {
-    inner: Inner,
-    default_sampling: SimpleSamplingParams,
+    pub inner: Inner,
+    pub default_sampling: SimpleSamplingParams,
 }
 
 impl<'a, Inner> RunnerWithRecommendedSampling<Inner> {
