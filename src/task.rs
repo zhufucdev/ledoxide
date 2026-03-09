@@ -57,13 +57,14 @@ impl TaskDescriptor {
                 messages: vec![
                     (
                         MessageRole::User,
-                        ImageOrText::Text(format!(include_str!("../prompt/description.md"))),
+                        ImageOrText::Image(image::load_from_memory(self.image_buf.as_ref())?),
                     ),
                     (
                         MessageRole::User,
-                        ImageOrText::Image(image::load_from_memory(self.image_buf.as_ref())?),
+                        ImageOrText::Text(format!(include_str!("../prompt/description.md"))),
                     ),
                 ],
+                prefill: Some("<think>\n".to_string()),
                 ..Default::default()
             };
             if let Some(sampling) = &self.vlm_sampling {
@@ -71,7 +72,7 @@ impl TaskDescriptor {
             }
             let runner = vlm.get_model().await?;
             let mut output = runner.get_vlm_response(request)?;
-            if output.starts_with("<think>") {
+            if output.contains("<think>") {
                 // strip the <think> tag
                 const END_TAG: &str = "</think>";
                 if let Some(end) = output.find(END_TAG) {
@@ -403,7 +404,8 @@ impl<'de> Deserialize<'de> for TaskControlBlock {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, str::FromStr};
+    use image::EncodableLayout;
+    use std::{io::Write, path::PathBuf, str::FromStr};
     use tokio::fs;
 
     use crate::schedule;
@@ -443,20 +445,24 @@ d a post count
             messages: vec![
                 (
                     MessageRole::User,
-                    ImageOrText::Text(format!(include_str!("../prompt/description.md"))),
-                ),
-                (
-                    MessageRole::User,
                     ImageOrText::Image(
                         image::load_from_memory(screenshot_content.as_ref()).unwrap(),
                     ),
                 ),
+                (
+                    MessageRole::User,
+                    ImageOrText::Text(format!(include_str!("../prompt/description.md"))),
+                ),
             ],
+            prefill: Some("<think>\n".to_string()),
             ..Default::default()
         };
         let vlm = schedule::default_vlm_model().await.unwrap();
         log::debug!("model building finished");
-        let response: String = vlm.get_vlm_response(request).unwrap();
-        log::info!(target: "vlm", "{}", response);
+        for chunk in vlm.stream_vlm_response(request) {
+            std::io::stdout()
+                .write(UTF_8.encode(chunk.unwrap().as_ref()).0.as_bytes())
+                .unwrap();
+        }
     }
 }

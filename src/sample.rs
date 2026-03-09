@@ -8,6 +8,8 @@ pub struct SimpleSamplingParams {
     pub top_k: Option<i32>,
     pub temperature: Option<f32>,
     pub seed: Option<u32>,
+    pub presence_penalty: Option<f32>,
+    pub repetition_penalty: Option<f32>,
 }
 
 impl SimpleSamplingParams {
@@ -18,6 +20,11 @@ impl SimpleSamplingParams {
         }
         if let Some(p) = self.top_p {
             samplers.push(LlamaSampler::top_p(p, 8));
+        }
+        if let Some(p) = self.presence_penalty
+            && let Some(r) = self.repetition_penalty
+        {
+            samplers.push(LlamaSampler::penalties(-1, p, 0.0, r));
         }
         samplers.push(LlamaSampler::dist(
             self.seed.unwrap_or_else(|| rand::random()),
