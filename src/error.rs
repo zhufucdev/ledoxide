@@ -48,16 +48,17 @@ pub enum CreateTaskError {
     UnknownField(String),
     #[strum(to_string = "invalid field: {0}")]
     InvalidField(String),
+    #[strum(to_string = "unspecific content-type for {0}")]
+    UnspecificContentType(String),
+    #[strum(to_string = "unsupported file type: {0}")]
+    UnsupportedFileType(String),
 }
 
 impl IntoResponse for CreateTaskError {
     fn into_response(self) -> axum::response::Response {
         let body = Json(json!({ "error": self.to_string()}));
         let status = match self {
-            CreateTaskError::InvalidRequest(_) => StatusCode::BAD_REQUEST,
-            CreateTaskError::MissingField(_) => StatusCode::BAD_REQUEST,
-            CreateTaskError::UnknownField(_) => StatusCode::BAD_REQUEST,
-            CreateTaskError::InvalidField(_) => StatusCode::BAD_REQUEST,
+            _ => StatusCode::BAD_REQUEST,
         };
         (status, body).into_response()
     }

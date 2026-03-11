@@ -1,15 +1,25 @@
-use std::sync::{Arc, RwLock};
+use std::{
+    borrow::Cow,
+    io::{Cursor, Read},
+    sync::{Arc, RwLock},
+};
 
-use anyhow::{Context, anyhow};
+use anyhow::anyhow;
 use axum::{
     RequestExt,
     body::Bytes,
     extract::{FromRequest, Multipart},
 };
 use encoding_rs::UTF_8;
+use image::EncodableLayout;
 use regex::Regex;
 use serde::{Deserialize, Serialize, ser::SerializeStruct};
 use strum::Display;
+use zip::{
+    ZipArchive,
+    result::ZipError,
+    unstable::stream::{ZipStreamReader, ZipStreamVisitor},
+};
 
 use crate::{
     bill::{Bill, Category},
@@ -23,16 +33,20 @@ use crate::{
     sample::{LlguidanceSamplingParams, LlguidanceSchema, SimpleSamplingParams},
 };
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct TaskDescriptor {
-    image_buf: Vec<u8>,
+    images_buf: Vec<Vec<u8>>,
     lm_sampling: Option<SimpleSamplingParams>,
     vlm_sampling: Option<SimpleSamplingParams>,
 }
 
 impl TaskDescriptor {
-    pub fn image_bytes(&self) -> &[u8] {
-        &self.image_buf
+    pub fn images_count(&self) -> usize {
+        self.images_buf.len()
+    }
+
+    pub fn image_bytes(&self, idx: usize) -> &[u8] {
+        &self.images_buf[idx]
     }
 
     pub fn lm_sampling(&self) -> Option<SimpleSamplingParams> {
@@ -52,38 +66,7 @@ impl TaskDescriptor {
         for<'a> LM: TextLmRunner<'a> + Send + Sync + 'static,
         for<'a> VLM: VisionLmRunner<'a> + TextLmRunner<'a> + Send + Sync + 'static,
     {
-        let description = {
-            let mut request = VisionLmRequest {
-                messages: vec![
-                    (
-                        MessageRole::User,
-                        ImageOrText::Image(image::load_from_memory(self.image_buf.as_ref())?),
-                    ),
-                    (
-                        MessageRole::User,
-                        ImageOrText::Text(format!(include_str!("../prompt/description.md"))),
-                    ),
-                ],
-                prefill: Some("<think>\n".to_string()),
-                ..Default::default()
-            };
-            if let Some(sampling) = &self.vlm_sampling {
-                request.sampling = sampling.clone();
-            }
-            let runner = vlm.get_model().await?;
-            let mut output = runner.get_vlm_response(request)?;
-            if output.contains("<think>") {
-                // strip the <think> tag
-                const END_TAG: &str = "</think>";
-                if let Some(end) = output.find(END_TAG) {
-                    output = output.split_off(end + END_TAG.len())
-                }
-            }
-            while output.chars().nth(0).map_or(false, |c| c.is_whitespace()) {
-                output = output.trim_start().to_string();
-            }
-            output
-        };
+        let description = self.get_description(vlm.get_model().await?.as_ref())?;
         log::debug!(target: "task runner", "description: {}", description);
 
         if let Some(lm) = lm {
@@ -93,6 +76,43 @@ impl TaskDescriptor {
             let model = vlm.get_model().await?;
             self.run_with_description(model.as_ref(), &description)
         }
+    }
+
+    fn get_description(
+        &self,
+        runner: &impl for<'a> VisionLmRunner<'a>,
+    ) -> Result<String, RunTaskError> {
+        let mut request = VisionLmRequest {
+            messages: self
+                .images_buf
+                .iter()
+                .map(|buf| {
+                    image::load_from_memory(buf.as_slice())
+                        .map(|im| (MessageRole::User, ImageOrText::Image(im)))
+                })
+                .chain(std::iter::once(Ok((
+                    MessageRole::User,
+                    ImageOrText::Text(format!(include_str!("../prompt/description.md"))),
+                ))))
+                .collect::<Result<Vec<_>, _>>()?,
+            prefill: Some("<think>\n".to_string()),
+            ..Default::default()
+        };
+        if let Some(sampling) = &self.vlm_sampling {
+            request.sampling = sampling.clone();
+        }
+        let mut output = runner.get_vlm_response(request)?;
+        if output.contains("<think>") {
+            // strip the <think> tag
+            const END_TAG: &str = "</think>";
+            if let Some(end) = output.find(END_TAG) {
+                output = output.split_off(end + END_TAG.len())
+            }
+        }
+        while output.chars().nth(0).map_or(false, |c| c.is_whitespace()) {
+            output = output.trim_start().to_string();
+        }
+        Ok(output)
     }
 
     fn run_with_description<'a, LM>(
@@ -218,23 +238,52 @@ where
     type Rejection = CreateTaskError;
 
     async fn from_request(req: axum::extract::Request, _: &S) -> Result<Self, Self::Rejection> {
+        fn get_images_buf(source: Bytes, mime: &str) -> Result<Vec<Vec<u8>>, CreateTaskError> {
+            if mime.starts_with("image/") {
+                return Ok(vec![source.to_vec()]);
+            } else if !mime.starts_with("application/") {
+                return Err(CreateTaskError::UnspecificContentType(mime.into()));
+            }
+            let mut bufs = Vec::new();
+            let type_name = mime.split_once('/').unwrap().1;
+            match type_name {
+                "zip" | "zip-compressed" => {
+                    let mut archive = ZipArchive::new(Cursor::new(source))?;
+                    for i in 0..archive.len() {
+                        let item = archive.by_index(i)?;
+                        if item.is_file() {
+                            bufs.push(item.bytes().collect::<Result<Vec<_>, _>>()?);
+                        } else {
+                            return Err(ZipError::InvalidArchive(Cow::Owned(
+                                "accept files only, got dir / symlink".into(),
+                            ))
+                            .into());
+                        }
+                    }
+                }
+                _ => return Err(CreateTaskError::UnsupportedFileType(mime.into())),
+            }
+            Ok(bufs)
+        }
+
         let content_type = UTF_8
             .decode(req.headers().get("Content-Type").unwrap().as_bytes())
             .0;
         log::debug!("receiving {}", content_type);
 
-        let mut image_buf = None;
+        let mut images_buf = None;
         let (mut lm_sampling, mut vlm_sampling) = (None, None);
-        if content_type.starts_with("image/") {
-            let buf: Bytes = req.extract().await?;
-            image_buf = Some(buf.to_vec());
-        } else if content_type.starts_with("multipart/form-data") {
+        if content_type.starts_with("multipart/form-data") {
             let mut form: Multipart = req.extract().await?;
             while let Some(field) = form.next_field().await? {
                 let name = field.name().unwrap().to_string();
                 match name.as_str() {
                     "image" => {
-                        image_buf = Some(field.bytes().await?.to_vec());
+                        let mime = field
+                            .content_type()
+                            .ok_or(CreateTaskError::UnspecificContentType("image".to_string()))?
+                            .to_string();
+                        images_buf = Some(get_images_buf(field.bytes().await?, &mime)?);
                     }
                     "lm_sampling" | "vlm_sampling" => {
                         if let Some(mime) = field.content_type()
@@ -255,13 +304,17 @@ where
                     }
                 }
             }
+        } else {
+            let mime = content_type.to_string();
+            let buf: Bytes = req.extract().await?;
+            images_buf = Some(get_images_buf(buf, &mime)?);
         }
-        if image_buf.is_none() {
+        if images_buf.is_none() {
             return Err(CreateTaskError::MissingField("image".to_string()));
         }
 
         Ok(Self {
-            image_buf: image_buf.unwrap(),
+            images_buf: images_buf.unwrap(),
             lm_sampling,
             vlm_sampling,
         })
@@ -404,8 +457,7 @@ impl<'de> Deserialize<'de> for TaskControlBlock {
 
 #[cfg(test)]
 mod tests {
-    use image::EncodableLayout;
-    use std::{io::Write, path::PathBuf, str::FromStr};
+    use std::{path::PathBuf, str::FromStr};
     use tokio::fs;
 
     use crate::schedule;
@@ -426,7 +478,7 @@ d a post count
 - For bottom section, there is a comment section with a "Leave a Comment" button, indicating the user can interact with the post
 - The purchase is originally 2188, and is discounted by 0 bringing the final amount to 2188"#;
         let req = TaskDescriptor {
-            image_buf: Vec::new(),
+            images_buf: Vec::new(),
             lm_sampling: None,
             vlm_sampling: None,
         };
@@ -441,28 +493,13 @@ d a post count
             .unwrap()
             .join("asset/second-hand-horse-screenshot.jpeg");
         let screenshot_content = fs::read(screenshot_path).await.unwrap();
-        let request = VisionLmRequest {
-            messages: vec![
-                (
-                    MessageRole::User,
-                    ImageOrText::Image(
-                        image::load_from_memory(screenshot_content.as_ref()).unwrap(),
-                    ),
-                ),
-                (
-                    MessageRole::User,
-                    ImageOrText::Text(format!(include_str!("../prompt/description.md"))),
-                ),
-            ],
-            prefill: Some("<think>\n".to_string()),
+        let task = TaskDescriptor {
+            images_buf: vec![screenshot_content],
             ..Default::default()
         };
         let vlm = schedule::default_vlm_model().await.unwrap();
         log::debug!("model building finished");
-        for chunk in vlm.stream_vlm_response(request) {
-            std::io::stdout()
-                .write(UTF_8.encode(chunk.unwrap().as_ref()).0.as_bytes())
-                .unwrap();
-        }
+        let description = task.get_description(&vlm).unwrap();
+        log::info!(target: "model output", "{}", description);
     }
 }
