@@ -26,10 +26,11 @@ use crate::{
     error::{CreateTaskError, RunTaskError},
     key,
     models::TimedModel,
-    runner::{
-        ImageOrText, MessageRole, TextLmRequest, TextLmRunner, TextLmRunnerExt, VisionLmRequest,
-        VisionLmRunner, VisionLmRunnerExt,
-    },
+};
+
+use llama_runner::{
+    ImageOrText, MessageRole, TextLmRequest, TextLmRunner, TextLmRunnerExt, VisionLmRequest,
+    VisionLmRunner, VisionLmRunnerExt,
     sample::{LlguidanceSamplingParams, LlguidanceSchema, SimpleSamplingParams},
 };
 

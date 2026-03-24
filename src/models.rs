@@ -4,7 +4,7 @@ use anyhow::Ok;
 use futures::future::BoxFuture;
 use tokio::{sync::RwLock, task::JoinHandle};
 
-use crate::runner::{Gemma3TextRunner, Gemma3VisionRunner, RunnerWithRecommendedSampling};
+use llama_runner::{Gemma3TextRunner, Gemma3VisionRunner, RunnerWithRecommendedSampling};
 
 pub struct ModelProducer<Model>(
     Box<dyn Fn() -> BoxFuture<'static, anyhow::Result<Model>> + Send + Sync>,
