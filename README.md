@@ -22,6 +22,45 @@ docker run -p 3100:3100 \
   zhufucdev/ledoxide:latest
 ```
 
+### Running on nixOS
+
+Add this repo as flake input and use the provided service.
+
+```nix
+
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    ledoxide = {
+      url = "github:zhufucdev/ledoxide";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+  outputs =
+    inputs@{
+      self,
+      nixpkgs,
+      ledoxide,
+      ...
+    }:
+    {
+      nixosConfigurations.functionaltux = nixpkgs.lib.nixosSystem {
+        modules = [
+          {...}: {
+            services.ledoxide = {
+              enable = true;
+              authKey = "your_secret_bearer_token";
+              extraEnv = "HF_HOME=/var/lib/hf-hub";
+            };
+          },
+          ledoxide.nixosModules.ledoxide # omit this if you only want the standalone package!
+          ledoxide.nixosModules.package
+        ];
+      };
+    };
+}
+```
+
 ### Environment Variables
 
 | Variable      | Description                                                                                                                                                     |
