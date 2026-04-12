@@ -5,7 +5,7 @@ use clap::Parser;
 use crate::key;
 
 #[derive(Debug, Parser)]
-#[command(version, about, long_about = None)]
+#[command(version = option_env!("APP_VERSION"), about, long_about = None)]
 /// Client pulling based HTTP server to implement a VLM based bookkeeping workflow.
 pub struct Cli {
     #[arg(short, long, default_value = "127.0.0.1:3100")]

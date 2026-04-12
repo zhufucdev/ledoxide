@@ -1,7 +1,6 @@
 use axum::{
     Json,
     extract::{DefaultBodyLimit, Path, State},
-    handler::Handler,
     routing::{get, post},
 };
 use clap::Parser;

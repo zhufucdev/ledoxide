@@ -4,22 +4,16 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use anyhow::anyhow;
 use axum::{
     RequestExt,
     body::Bytes,
     extract::{FromRequest, Multipart},
 };
 use encoding_rs::UTF_8;
-use image::EncodableLayout;
 use regex::Regex;
 use serde::{Deserialize, Serialize, ser::SerializeStruct};
 use strum::Display;
-use zip::{
-    ZipArchive,
-    result::ZipError,
-    unstable::stream::{ZipStreamReader, ZipStreamVisitor},
-};
+use zip::{ZipArchive, result::ZipError};
 
 use crate::{
     bill::{Bill, Category},
@@ -32,6 +26,7 @@ use llama_runner::{
     ImageOrText, MessageRole, TextLmRequest, TextLmRunner, TextLmRunnerExt, VisionLmRequest,
     VisionLmRunner, VisionLmRunnerExt,
     sample::{LlguidanceSamplingParams, LlguidanceSchema, SimpleSamplingParams},
+    template::ModelChatTemplate,
 };
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -64,8 +59,12 @@ impl TaskDescriptor {
         lm: Option<&TimedModel<LM>>,
     ) -> Result<Bill, RunTaskError>
     where
-        for<'a> LM: TextLmRunner<'a> + Send + Sync + 'static,
-        for<'a> VLM: VisionLmRunner<'a> + TextLmRunner<'a> + Send + Sync + 'static,
+        for<'a, 'req> LM: TextLmRunner<'a, 'req, ModelChatTemplate> + Send + Sync + 'static,
+        for<'a, 'req> VLM: VisionLmRunner<'a, 'req, ModelChatTemplate>
+            + TextLmRunner<'a, 'req, ModelChatTemplate>
+            + Send
+            + Sync
+            + 'static,
     {
         let description = self.get_description(vlm.get_model().await?.as_ref())?;
         log::debug!(target: "task runner", "description: {}", description);
@@ -81,21 +80,23 @@ impl TaskDescriptor {
 
     fn get_description(
         &self,
-        runner: &impl for<'a> VisionLmRunner<'a>,
+        runner: &impl for<'a, 'req> VisionLmRunner<'a, 'req, ModelChatTemplate>,
     ) -> Result<String, RunTaskError> {
+        let prompt = format!(include_str!("../prompt/description.md"));
+        let ims = self
+            .images_buf
+            .iter()
+            .map(|buf| image::load_from_memory(buf.as_slice()))
+            .collect::<Result<Vec<_>, _>>()?;
         let mut request = VisionLmRequest {
-            messages: self
-                .images_buf
+            messages: ims
                 .iter()
-                .map(|buf| {
-                    image::load_from_memory(buf.as_slice())
-                        .map(|im| (MessageRole::User, ImageOrText::Image(im)))
-                })
-                .chain(std::iter::once(Ok((
+                .map(|im| (MessageRole::User, ImageOrText::Image(&im)))
+                .chain(std::iter::once((
                     MessageRole::User,
-                    ImageOrText::Text(format!(include_str!("../prompt/description.md"))),
-                ))))
-                .collect::<Result<Vec<_>, _>>()?,
+                    ImageOrText::Text(&prompt),
+                )))
+                .collect::<Vec<_>>(),
             prefill: Some("<think>\n".to_string()),
             ..Default::default()
         };
@@ -122,13 +123,11 @@ impl TaskDescriptor {
         description: &str,
     ) -> Result<Bill, RunTaskError>
     where
-        LM: TextLmRunner<'a> + Send + Sync + 'static,
+        for<'req> LM: TextLmRunner<'a, 'req, ModelChatTemplate> + Send + Sync + 'static,
     {
+        let notes_prompt = format!(include_str!("../prompt/note_taking.md"), description);
         let mut request = TextLmRequest {
-            messages: vec![(
-                MessageRole::User,
-                format!(include_str!("../prompt/note_taking.md"), description),
-            )],
+            messages: vec![(MessageRole::User, &notes_prompt)],
             llguidance: Some(LlguidanceSamplingParams {
                 schema: LlguidanceSchema::Lark,
                 data: include_str!("../constraint/note_taking.lark").to_string(),
@@ -150,14 +149,13 @@ impl TaskDescriptor {
             .trim_start()
             .to_string();
         log::debug!(target: "task runner", "notes: {}", notes);
+        let amount_prompt = format!(
+            include_str!("../prompt/amount_extraction.md"),
+            notes, description
+        );
+
         let mut request = TextLmRequest {
-            messages: vec![(
-                MessageRole::User,
-                format!(
-                    include_str!("../prompt/amount_extraction.md"),
-                    notes, description
-                ),
-            )],
+            messages: vec![(MessageRole::User, &amount_prompt)],
             llguidance: Some(LlguidanceSamplingParams {
                 schema: LlguidanceSchema::Lark,
                 data: include_str!("../constraint/amount_extraction.lark").to_string(),
@@ -182,20 +180,18 @@ impl TaskDescriptor {
         };
         log::debug!(target: "task runner", "amount: {}", amount);
 
+        let cat_prompt = format!(
+            include_str!("../prompt/categorization.md"),
+            notes,
+            description,
+            Category::all_cases()
+                .iter()
+                .map(|c| format!("- {}", c.name()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
         let mut request = TextLmRequest {
-            messages: vec![(
-                MessageRole::User,
-                format!(
-                    include_str!("../prompt/categorization.md"),
-                    notes,
-                    description,
-                    Category::all_cases()
-                        .iter()
-                        .map(|c| format!("- {}", c.name()))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                ),
-            )],
+            messages: vec![(MessageRole::User, &cat_prompt)],
             llguidance: Some(LlguidanceSamplingParams {
                 schema: LlguidanceSchema::Lark,
                 data: format!(
