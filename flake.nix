@@ -1,107 +1,80 @@
 {
   description = "A Nix-flake-based Rust development environment";
 
+  # Nixpkgs / NixOS version to use.
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    fenix = {
-      url = "https://flakehub.com/f/nix-community/fenix/0.1";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    nixpkgs.url = "nixpkgs/nixos-unstable";
+    crane.url = "github:ipetkov/crane";
   };
 
   outputs =
-    { self, ... }@inputs:
-
+    {
+      self,
+      nixpkgs,
+      crane,
+    }:
     let
+
+      # to work with older version of flakes
+      lastModifiedDate = self.lastModifiedDate or self.lastModified or "19700101";
+
+      # Generate a user-friendly version number.
+      version = builtins.substring 0 8 lastModifiedDate;
+
+      # System types to support.
       supportedSystems = [
         "x86_64-linux"
-        "aarch64-linux"
         "x86_64-darwin"
+        "aarch64-linux"
         "aarch64-darwin"
       ];
-      lib = inputs.nixpkgs.lib;
-      forEachSupportedSystem =
-        f:
-        lib.genAttrs supportedSystems (
-          system:
-          f {
-            pkgs = import inputs.nixpkgs {
-              inherit system;
-              overlays = [
-                inputs.self.overlays.default
-              ];
-              config = {
-                cudaCapabilities = [ "8.9" ];
-                cudaForwardCompat = true;
-                allowUnfree = true;
-                cudaSupport = true;
-              };
-            };
-          }
-        );
-    in
-    {
-      overlays.default = final: prev: {
-        rustToolchain =
-          with inputs.fenix.packages.${prev.stdenv.hostPlatform.system};
-          combine (
-            with stable;
-            [
-              clippy
-              rustc
-              cargo
-              rustfmt
-              rust-src
-            ]
-          );
-      };
 
-      devShells = forEachSupportedSystem (
-        { pkgs }:
-        {
-          default = pkgs.mkShell {
-            packages =
-              with pkgs;
-              [
-                rustToolchain
-                rustPlatform.bindgenHook
-                cmake
-                openssl
-                pkg-config
-                cargo-deny
-                cargo-edit
-                cargo-watch
-                rust-analyzer
-                openssl
-                addDriverRunpath
-              ]
-              ++ lib.optionals stdenv.isLinux [
-                cudaPackages.cudatoolkit
-                cudaPackages.cuda_nvcc
-                cudaPackages.cuda_cudart
-                cudaPackages.libcublas
-              ];
+      # Helper function to generate an attrset '{ x86_64-linux = f "x86_64-linux"; ... }'.
+      forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
 
-            env = {
-              # Required by rust-analyzer
-              RUST_SRC_PATH = "${pkgs.rustToolchain}/lib/rustlib/src/rust/library";
-            }
-            // lib.optionalAttrs pkgs.stdenv.isLinux {
-              CUDA_PATH = "${pkgs.cudaPackages.cudatoolkit}";
-              CUDA_COMPUTE_CAP = "89";
-              CUDATKDIR = "${pkgs.cudaPackages.cudatoolkit}";
-              LIBRARY_PATH = lib.strings.join ":" [
-                "${pkgs.cudaPackages.cudatoolkit}/lib/stubs"
-              ];
-              LD_LIBRARY_PATH = lib.makeLibraryPath [
-                pkgs.stdenv.cc.cc.lib.lib
-                pkgs.addDriverRunpath.driverLink
-                pkgs.openssl.out
-              ];
-              RUSTFLAGS = "-L ${pkgs.cudaPackages.cuda_cudart}/lib -L ${pkgs.cudaPackages.libcublas.static}/lib";
-            };
+      # Nixpkgs instantiated for supported system types.
+      nixpkgsFor = forAllSystems (
+        system:
+        import nixpkgs {
+          inherit system;
+          overlays = [ self.overlay ];
+          config = {
+            allowUnfree = true;
           };
         }
       );
+
+    in
+
+    {
+
+      # A Nixpkgs overlay.
+      overlay =
+        final: prev:
+        let
+          craneLib = crane.mkLib final;
+          gpuFeatures = if final.stdenv.hostPlatform.isDarwin then [ "metal" ] else [ "cuda" ];
+        in
+        {
+          ledoxide = final.callPackage (import ./nix/package.nix) {
+            inherit craneLib;
+            inherit version;
+            features = gpuFeatures;
+          };
+        };
+
+      # Provide some binary packages for selected system types.
+      packages = forAllSystems (system: {
+        default = nixpkgsFor.${system}.ledoxide;
+      });
+
+      # A NixOS module, if applicable (e.g. if the package provides a system service).
+      nixosModule = (import ./nix/module.nix) self;
+
+      # Tests run by 'nix flake check' and by Hydra.
+      checks = forAllSystems (system: {
+        inherit (self.packages.${system}) default;
+      });
+
     };
 }
