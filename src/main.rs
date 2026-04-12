@@ -49,8 +49,12 @@ fn app(args: &args::App) -> axum::Router {
         .with_state(AppState::new(args))
 }
 
-async fn index() -> &'static str {
-    return concat!(env!("CARGO_PKG_NAME"), " ", env!("CARGO_PKG_VERSION"));
+async fn index() -> String {
+    return format!(
+        "{} {}",
+        env!("CARGO_PKG_NAME"),
+        option_env!("APP_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+    );
 }
 
 #[axum::debug_handler]

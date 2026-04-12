@@ -69,7 +69,14 @@
       });
 
       # A NixOS module, if applicable (e.g. if the package provides a system service).
-      nixosModule = (import ./nix/module.nix) self;
+      nixosModules = {
+        ledoxide = import ./nix/module.nix;
+        package =
+          { pkgs, ... }:
+          {
+            nixpkgs.overlays = [ self.overlay ];
+          };
+      };
 
       # Tests run by 'nix flake check' and by Hydra.
       checks = forAllSystems (system: {
