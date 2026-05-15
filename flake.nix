@@ -52,12 +52,11 @@
       overlay =
         final: prev:
         let
-          craneLib = crane.mkLib final;
           gpuFeatures = if final.stdenv.hostPlatform.isDarwin then [ "metal" ] else [ "cuda" ];
         in
         {
           ledoxide = final.callPackage (import ./nix/package.nix) {
-            inherit craneLib;
+            inherit crane;
             inherit version;
             features = gpuFeatures;
           };

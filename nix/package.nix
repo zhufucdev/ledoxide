@@ -2,7 +2,8 @@
   lib,
   stdenv,
   autoAddDriverRunpath,
-  craneLib,
+  crane,
+  pkgs,
   rustPlatform,
   cudaPackages,
   features ? [ ],
@@ -54,6 +55,12 @@ let
     ];
   };
 
+  craneLib = (crane.mkLib pkgs).overrideScope (
+    final: prev: {
+      stdenvSelector = p: effectiveStdenv;
+    }
+  );
+
   # Common args shared between dep-only and full builds
   commonArgs = {
     inherit
@@ -61,7 +68,6 @@ let
       buildInputs
       env
       ;
-    stdenv = p: effectiveStdenv;
 
     cargoExtraArgs = lib.concatMapStringsSep " " (f: "--features ${f}") features;
     # Tell crane not to run tests in the build phase
