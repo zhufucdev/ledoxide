@@ -34,3 +34,4 @@ tower = { version = "0.5.3", features = ["util"] }
 [features]
 cuda = ["llama-runner/cuda"]
 metal = ["llama-runner/metal"]
+rocm = ["llama-runner/rocm"]
