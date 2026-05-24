@@ -397,6 +397,7 @@ where
 struct Notes {
     name: String,
     #[schemars(rename = "type")]
+    #[serde(rename = "type")]
     type_: String,
     retailer: Option<String>,
 }
