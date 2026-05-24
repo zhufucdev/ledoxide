@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use clap::Parser;
+use tracing::{Level, event, trace};
 
 use crate::key;
 
@@ -52,7 +53,7 @@ impl Default for App {
             max_concurrency: 4,
             max_memory_size: 468_000,
             model_timeout: Duration::from_mins(5),
-            offline: false
+            offline: false,
         }
     }
 }
@@ -66,7 +67,7 @@ impl From<Cli> for App {
                     Ok(key) => key,
                     Err(_) => {
                         let random_key = key::generate_random_key();
-                        log::error!("missing authorization key, using a random one: {random_key}");
+                        println!("missing authorization key, using a random one: {random_key}");
                         random_key
                     }
                 },

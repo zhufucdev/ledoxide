@@ -4,12 +4,13 @@ use serde::{
     Deserialize, Serialize,
     de::{Unexpected, Visitor},
 };
+use smol_str::SmolStr;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bill {
-    pub notes: String,
+    pub notes: SmolStr,
     pub amount: f32,
-    pub category: Option<Category>,
+    pub category: Option<SmolStr>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

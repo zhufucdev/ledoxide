@@ -6,13 +6,14 @@ use axum::{
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
+use tracing::{Level, event};
 
 use crate::{
     bill::Category,
     error::GetTaskError,
     key::ValidKey,
     state::AppState,
-    task::{TaskControlBlock, TaskDescriptor},
+    task::{TaskControlBlock, ollama::OllamaTaskDescriptor},
 };
 
 mod args;
@@ -26,7 +27,7 @@ mod task;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
-    pretty_env_logger::init();
+    tracing_subscriber::fmt::init();
     let cli = args::Cli::parse();
     Category::load_from_names(&cli.categories);
     let bind_addr = cli.bind.clone();
@@ -34,7 +35,11 @@ async fn main() {
 
     let app = app(&args);
     let listener = TcpListener::bind(bind_addr).await.expect("failed to bind");
-    log::info!("Listening on http://{}", listener.local_addr().unwrap());
+    event!(
+        Level::INFO,
+        "Listening on http://{}",
+        listener.local_addr().unwrap()
+    );
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -61,7 +66,7 @@ async fn index() -> String {
 async fn create_task(
     _: ValidKey,
     state: State<AppState>,
-    task: TaskDescriptor,
+    task: OllamaTaskDescriptor,
 ) -> Json<TaskControlBlock> {
     Json(state.scheduler().create_task(task).await)
 }
@@ -92,23 +97,21 @@ mod tests {
     use futures::TryStreamExt;
     use reqwest::{StatusCode, multipart::Form};
     use tower::{Service, util::ServiceExt};
+    use tracing_test::traced_test;
 
     use crate::bill::Category;
 
     use super::*;
 
     #[tokio::test]
+    #[traced_test]
     async fn test_workflow() {
-        _ = pretty_env_logger::try_init();
         let auth_key = "WK1wJ5ipiVvSdmdCPqNx8up8qj8GCwbm_";
         Category::load_from_names(["Shopping", "Food", "Transport", "Rent"]);
         fn check_finished_state(success: task::Success) {
             let bill = success.0;
             assert_eq!(bill.amount, 2188f32);
-            assert_eq!(
-                bill.category,
-                Some(Category::from_name("Shopping").unwrap())
-            )
+            assert_eq!(bill.category, Some("Shopping".into()))
         }
 
         let mut app = app(&args::App::default()).into_service();

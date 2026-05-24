@@ -1,6 +1,5 @@
 use std::{
     io::{self, SeekFrom},
-    num::NonZeroU32,
     sync::Arc,
     time::Duration,
 };
@@ -16,69 +15,54 @@ use tokio::{
     sync::Mutex,
     task::JoinHandle,
 };
+use tracing::{Level, event};
 
-use crate::models::{TextModel, TextModelProducer, VisionModel, VisionModelProducer};
 use crate::{
+    error::RunTaskError,
     models::{ModelProducer, TimedModel},
-    task::{self, TaskControlBlock, TaskDescriptor},
+    task::{self, RunTask, TaskControlBlock},
 };
 
-use llama_runner::{
-    GEMMA_3_1B_GUFF_MODEL_FILENAME, GEMMA_3_1B_GUFF_MODEL_ID, Gemma3TextRunner, Gemma3VisionRunner,
-    QWEN_3D5_4B_GUFF_MODDEL_FILENAME, QWEN_3D5_4B_GUFF_MODEL_ID,
-    QWEN_3D5_4B_GUFF_MULTIMODEL_FILENAME, RunnerWithRecommendedSampling,
-};
-
-struct ScheduleQueues {
+struct ScheduleQueues<Task> {
     active: Arc<Mutex<Vec<(TaskControlBlock, JoinHandle<()>)>>>,
-    pending: Arc<Mutex<Vec<(TaskControlBlock, Arc<TaskDescriptor>)>>>,
+    pending: Arc<Mutex<Vec<(TaskControlBlock, Arc<Task>)>>>,
     finished: Arc<Mutex<Vec<TaskControlBlock>>>,
 }
 
-pub struct Scheduler {
-    queues: Arc<ScheduleQueues>,
+pub struct Scheduler<Runner: RunTask> {
+    queues: Arc<ScheduleQueues<Runner::TaskDescriptor>>,
     swap_file: Arc<Mutex<File>>,
     max_memory_size: usize,
     max_concurrency: usize,
-    vlm: Arc<TimedModel<VisionModel>>,
-    lm: Option<Arc<TimedModel<TextModel>>>,
+    runner: Arc<TimedModel<Runner>>,
 }
 
-impl Scheduler {
+impl<Runner> Scheduler<Runner>
+where
+    Runner: RunTask,
+{
     pub fn new(
         max_concurrency: usize,
         max_memory_size: usize,
         model_timeout: Duration,
-        vlm_builder: VisionModelProducer,
-        lm_builder: TextModelProducer,
+        runner: ModelProducer<Runner>,
     ) -> Self {
         Self {
             queues: Default::default(),
             max_memory_size,
             swap_file: Arc::new(Mutex::new(tempfile().map(File::from_std).unwrap())),
             max_concurrency,
-            vlm: Arc::new(TimedModel::new("vlm", model_timeout, vlm_builder)),
-            lm: Some(Arc::new(TimedModel::new("lm", model_timeout, lm_builder))),
+            runner: Arc::new(TimedModel::new(model_timeout, runner)),
         }
     }
+}
 
-    pub fn new_singular(
-        max_concurrency: usize,
-        max_memory_size: usize,
-        model_timeout: Duration,
-        vlm_builder: VisionModelProducer,
-    ) -> Self {
-        Self {
-            queues: Default::default(),
-            max_memory_size,
-            swap_file: Arc::new(Mutex::new(tempfile().map(File::from_std).unwrap())),
-            max_concurrency,
-            vlm: Arc::new(TimedModel::new("vlm", model_timeout, vlm_builder)),
-            lm: None,
-        }
-    }
-
-    pub async fn create_task(&self, descriptor: TaskDescriptor) -> TaskControlBlock {
+impl<Runner> Scheduler<Runner>
+where
+    Runner: RunTask + Send + Sync + 'static,
+    Runner::TaskDescriptor: Send + Sync + 'static,
+{
+    pub async fn create_task(&self, descriptor: Runner::TaskDescriptor) -> TaskControlBlock {
         let task = TaskControlBlock::new();
         self.queues
             .pending
@@ -86,7 +70,7 @@ impl Scheduler {
             .await
             .push((task.clone(), Arc::new(descriptor)));
         let task_run = self.try_run_topmost().await;
-        log::info!(target: "scheduler", "running topmost {} tasks", task_run);
+        event!(target: "scheduler", Level::DEBUG, "running topmost {} tasks", task_run);
         task
     }
 
@@ -95,20 +79,21 @@ impl Scheduler {
         let mut active_queue = self.queues.active.lock().await;
         let original_active_tasks = active_queue.len();
         let mut pending_queue = self.queues.pending.lock().await;
-        log::debug!(target: "scheduler",
+        event!(target: "scheduler",
+            Level::DEBUG,
             "try running topmost {}, active count = {}, max concurrency = {}",
             pending_queue.len(), original_active_tasks, self.max_concurrency);
         for _ in 0..self.max_concurrency - active_queue.len() {
             if let Some((tcb, descriptor)) = pending_queue.pop() {
                 tcb.set_state(task::State::Running);
-                let (vlm, lm) = (self.vlm.clone(), self.lm.clone());
+                let runner = self.runner.clone();
                 let queues = self.queues.clone();
                 let swap_file = self.swap_file.clone();
                 let max_memory_size = self.max_memory_size;
                 active_queue.push((
                     tcb.clone(),
                     tokio::spawn(async move {
-                        let job = descriptor.run(&vlm, lm.as_deref()).await;
+                        let job = async { runner.get_model().await.map_err(RunTaskError::Prepare)?.extract(&descriptor).await }.await;
                         tcb.set_state(task::State::Finished(
                             match job {
                                 Ok(bill) => Ok(task::Success(bill)),
@@ -126,11 +111,11 @@ impl Scheduler {
 
                             tokio::time::sleep(Duration::from_secs(10)).await;
                             if let Err(err) = queues.move_inactive_to_swap(&mut *swap_file.lock().await, max_memory_size).await {
-                                log::error!(target: "scheduler", "swap failed, inactive queue now has a crowd of {}: {}", 
+                                event!(target: "scheduler", Level::ERROR, "swap failed, inactive queue now has a crowd of {}: {}", 
                                     queues.finished.lock().await.len(), err);
                             }
                         } else {
-                            log::error!(target: "scheduler", "finished task {} not found in active queue", tcb.id());
+                            event!(target: "scheduler", Level::ERROR, "finished task {} not found in active queue", tcb.id());
                         }
                     }),
                 ));
@@ -167,14 +152,14 @@ impl Scheduler {
                 Ok(len) => len,
                 Err(err) => {
                     if err.kind() == io::ErrorKind::UnexpectedEof {
-                        log::debug!(target: "scheduler", "end of swap file");
+                        event!(target: "scheduler", Level::DEBUG, "end of swap file");
                         return Ok(None);
                     } else {
                         return Err(anyhow!(err));
                     }
                 }
             };
-            log::debug!("len<in> = {}", len);
+            event!(Level::DEBUG, "len<in> = {}", len);
             let mut buf = vec![0u8; len as usize];
             file.read_exact(&mut buf).await?;
             let chunk: Vec<TaskControlBlock> = postcard::from_bytes(&buf)?;
@@ -193,7 +178,7 @@ impl Scheduler {
     }
 }
 
-impl ScheduleQueues {
+impl<Task> ScheduleQueues<Task> {
     async fn move_inactive_to_swap(
         &self,
         fd: &mut File,
@@ -203,13 +188,13 @@ impl ScheduleQueues {
         let mut finished_queue = self.finished.lock().await;
         let swap_amount = finished_queue.len() as i32 - max_memory_size as i32;
         if swap_amount <= 0 {
-            log::debug!(target: "scheduler", "finished queue size {} <= max memory size {}, no need to swap", finished_queue.len(), max_memory_size);
+            event!(target: "scheduler", Level::DEBUG, "finished queue size {} <= max memory size {}, no need to swap", finished_queue.len(), max_memory_size);
             return Ok(0);
         }
         let items_left = finished_queue.split_off(swap_amount as usize);
         let items_swapped = finished_queue.len();
         let buf = postcard::to_allocvec(finished_queue.as_slice())?;
-        log::debug!("len<out> = {}", buf.len());
+        event!(Level::DEBUG, "len<out> = {}", buf.len());
         fd.write_u32(buf.len() as u32).await?;
         fd.write(buf.as_slice()).await?;
         fd.flush().await?;
@@ -218,121 +203,21 @@ impl ScheduleQueues {
     }
 }
 
-impl Default for Scheduler {
+impl<Runner> Default for Scheduler<Runner>
+where
+    Runner: RunTask + Default,
+{
     fn default() -> Self {
-        Self::new_singular(
+        Self::new(
             4,
             468_000, // approx. 50 megabytes
             Duration::from_mins(5),
-            ModelProducer::new(default_vlm_model),
+            ModelProducer::new(async || Ok(Default::default())),
         )
     }
 }
 
-const GEMMA_3_12B_GUFF_MODEL_ID: &str = "google/gemma-3-12b-it-qat-q4_0-gguf";
-const GEMMA_3_12B_GUFF_MODEL_FILENAME: &str = "gemma-3-12b-it-q4_0.gguf";
-const GEMMA_3_12B_GUFF_MULTIMODEL_FILENAME: &str = "mmproj-model-f16-12B.gguf";
-const GEMMA_3_12B_CTX_SIZE: u32 = 10240;
-
-pub async fn default_vlm_model() -> anyhow::Result<VisionModel> {
-    Gemma3VisionRunner::default()
-        .await
-        .map_err(|err| anyhow::anyhow!(err))
-}
-
-pub async fn default_lm_model() -> anyhow::Result<TextModel> {
-    Gemma3TextRunner::default()
-        .await
-        .map_err(|err| anyhow::anyhow!(err))
-}
-
-pub async fn large_vlm_model() -> anyhow::Result<VisionModel> {
-    let model = Gemma3VisionRunner::new(
-        GEMMA_3_12B_GUFF_MODEL_ID,
-        GEMMA_3_12B_GUFF_MODEL_FILENAME,
-        GEMMA_3_12B_GUFF_MULTIMODEL_FILENAME,
-        GEMMA_3_12B_CTX_SIZE.try_into().unwrap(),
-    )
-    .await?;
-    Ok(model.into())
-}
-
-fn offline_vision_model(
-    repo_id: &str,
-    model_filename: &str,
-    multimodel_filename: &str,
-    ctx_size: NonZeroU32,
-) -> anyhow::Result<VisionModel> {
-    let hf_cache = std::env::var("HF_HOME")
-        .map(|name| hf_hub::Cache::new(name.into()))
-        .unwrap_or_else(|_| hf_hub::Cache::default());
-    let model_repo = hf_cache.model(repo_id.to_string());
-    log::debug!(target: "schedule",
-        "offline model repo: {model_repo:?}, model_filename: {model_filename}, multimodel_filename: {multimodel_filename}");
-
-    let model = Gemma3VisionRunner::from_files(
-        model_repo.get(model_filename).ok_or(anyhow::anyhow!(
-            "Model is not cached while running in offline mode"
-        ))?,
-        model_repo.get(multimodel_filename).ok_or(anyhow::anyhow!(
-            "Multimodel is not cached while running in offline mode"
-        ))?,
-        ctx_size,
-    )?;
-    Ok(model.into())
-}
-
-fn offline_text_model(
-    repo_id: &str,
-    model_filename: &str,
-    ctx_size: NonZeroU32,
-) -> anyhow::Result<TextModel> {
-    let hf_cache = std::env::var("HF_HOME")
-        .map(|name| hf_hub::Cache::new(name.into()))
-        .unwrap_or_else(|_| hf_hub::Cache::default());
-    let model_repo = hf_cache.model(repo_id.to_string());
-    log::debug!(target: "schedule",
-        "offline model repo: {model_repo:?}, model_filename: {model_filename}");
-
-    let inner = Gemma3TextRunner::from_file(
-        model_repo.get(model_filename).ok_or(anyhow::anyhow!(
-            "Model is not cached while running in offline mode"
-        ))?,
-        ctx_size,
-    )?;
-    Ok(RunnerWithRecommendedSampling {
-        inner,
-        default_sampling: Gemma3TextRunner::recommend_sampling(),
-    })
-}
-
-pub async fn offline_large_vlm_model() -> anyhow::Result<VisionModel> {
-    offline_vision_model(
-        GEMMA_3_12B_GUFF_MODEL_ID,
-        GEMMA_3_12B_GUFF_MODEL_FILENAME,
-        GEMMA_3_12B_GUFF_MULTIMODEL_FILENAME,
-        128_000.try_into().unwrap(),
-    )
-}
-
-pub async fn offline_vlm_model() -> anyhow::Result<VisionModel> {
-    offline_vision_model(
-        QWEN_3D5_4B_GUFF_MODEL_ID,
-        QWEN_3D5_4B_GUFF_MODDEL_FILENAME,
-        QWEN_3D5_4B_GUFF_MULTIMODEL_FILENAME,
-        32_768.try_into().unwrap(),
-    )
-}
-
-pub async fn offline_lm_model() -> anyhow::Result<TextModel> {
-    offline_text_model(
-        GEMMA_3_1B_GUFF_MODEL_ID,
-        GEMMA_3_1B_GUFF_MODEL_FILENAME,
-        32_000.try_into().unwrap(),
-    )
-}
-
-impl Default for ScheduleQueues {
+impl<Task> Default for ScheduleQueues<Task> {
     fn default() -> Self {
         Self {
             active: Arc::new(Mutex::new(Vec::new())),
@@ -344,21 +229,27 @@ impl Default for ScheduleQueues {
 
 #[cfg(test)]
 mod tests {
-    use crate::bill::Category;
+    use smol_str::SmolStr;
+    use tracing_test::traced_test;
+
+    use crate::{
+        bill::{Bill, Category},
+        task::TaskDescriptor,
+    };
 
     use super::*;
     #[tokio::test]
+    #[traced_test]
     async fn test_swap() {
-        _ = pretty_env_logger::try_init();
         Category::load_from_names(["No category"]);
-        let scheduler = Scheduler::default();
+        let scheduler = Scheduler::<MockRunner>::default();
         for i in 0..10 {
             let tcb = TaskControlBlock::new();
             tcb.set_state(task::State::Finished(Ok(task::Success(
                 crate::bill::Bill {
-                    notes: "No.".to_string(),
+                    notes: "No.".into(),
                     amount: i as f32 / 3f32,
-                    category: Category::from_name("No category"),
+                    category: Some("No category".into()),
                 },
             ))));
             scheduler.queues.finished.lock().await.push(tcb);
@@ -379,5 +270,31 @@ mod tests {
             .unwrap();
         assert_eq!(scheduler.queues.finished.lock().await.len(), 1);
         assert!(scheduler.get_task(lookup_id).await.unwrap().is_some());
+    }
+
+    struct MockTaskDescriptor;
+    #[derive(Default)]
+    struct MockRunner;
+
+    impl TaskDescriptor for MockTaskDescriptor {
+        fn images(&self) -> Vec<&[u8]> {
+            Vec::new()
+        }
+
+        fn category_names(&self) -> Vec<SmolStr> {
+            Vec::new()
+        }
+    }
+
+    impl RunTask for MockRunner {
+        type TaskDescriptor = MockTaskDescriptor;
+
+        async fn extract(&self, _: &Self::TaskDescriptor) -> Result<Bill, RunTaskError> {
+            Ok(Bill {
+                notes: SmolStr::default(),
+                amount: 0f32,
+                category: Some("No category".into()),
+            })
+        }
     }
 }

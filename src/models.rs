@@ -3,20 +3,14 @@ use std::{sync::Arc, time::Duration};
 use anyhow::Ok;
 use futures::future::BoxFuture;
 use tokio::{sync::RwLock, task::JoinHandle};
-
-use llama_runner::{Gemma3TextRunner, Gemma3VisionRunner, RunnerWithRecommendedSampling};
+use tracing::{Level, event};
 
 pub struct ModelProducer<Model>(
     Box<dyn Fn() -> BoxFuture<'static, anyhow::Result<Model>> + Send + Sync>,
 );
-pub type VisionModel = RunnerWithRecommendedSampling<Gemma3VisionRunner>;
-pub type TextModel = RunnerWithRecommendedSampling<Gemma3TextRunner>;
-pub type VisionModelProducer = ModelProducer<VisionModel>;
-pub type TextModelProducer = ModelProducer<TextModel>;
 
 /// unloads the model when not in use
 pub struct TimedModel<Model> {
-    name: String,
     timeout: Duration,
     cache: Arc<RwLock<Option<Arc<Model>>>>,
     timeout_job: RwLock<Option<JoinHandle<()>>>,
@@ -24,9 +18,8 @@ pub struct TimedModel<Model> {
 }
 
 impl<Model> TimedModel<Model> {
-    pub fn new(name: impl ToString, timeout: Duration, builder: ModelProducer<Model>) -> Self {
+    pub fn new(timeout: Duration, builder: ModelProducer<Model>) -> Self {
         Self {
-            name: name.to_string(),
             timeout,
             cache: Arc::new(RwLock::new(None)),
             timeout_job: RwLock::new(None),
@@ -41,15 +34,15 @@ where
 {
     pub async fn get_model(&self) -> anyhow::Result<Arc<Model>> {
         if let Some(timeout_job) = self.timeout_job.write().await.take() {
-            log::debug!(target: "model manager", "aborting timeout job for {}", self.name);
+            event!(target: "model manager", Level::TRACE, "aborting timeout job");
             timeout_job.abort();
         }
         self.add_timeout_job().await;
         if let Some(cached) = self.cache.read().await.as_ref() {
-            log::debug!(target: "model manager", "cache hit for model {}", self.name);
+            event!(target: "model manager", Level::TRACE, "cache hit");
             return Ok(cached.clone());
         }
-        log::debug!(target: "model manager", "cache missed, building model {}", self.name);
+        event!(target: "model manager", Level::DEBUG, "cache missed, building");
         let model = Arc::new(self.builder.0().await?);
         *self.cache.write().await = Some(model.clone());
         Ok(model.clone())
@@ -63,7 +56,7 @@ where
             .await
             .replace(tokio::task::spawn(async move {
                 tokio::time::sleep(timeout).await;
-                log::debug!(target: "timed model", "dropping model");
+                event!(target: "timed model", Level::TRACE, "dropping model");
                 *cache.write().await = None;
             }));
     }

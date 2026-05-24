@@ -1,58 +1,34 @@
 use std::sync::Arc;
 
-use crate::{
-    args,
-    models::ModelProducer,
-    schedule::{
-        Scheduler, default_lm_model, default_vlm_model, large_vlm_model, offline_large_vlm_model,
-        offline_lm_model, offline_vlm_model,
-    },
-};
+use crate::{args, models::ModelProducer, schedule::Scheduler, task::ollama::OllamaRunTask};
 
 #[derive(Clone)]
 pub struct AppState {
     auth_key: String,
-    scheduler: Arc<Scheduler>,
+    scheduler: Arc<Scheduler<OllamaRunTask>>,
 }
 
 impl AppState {
     pub fn new(args: &args::App) -> Self {
-        let scheduler = if args.offline {
+        let runner = if args.offline {
             if args.large_model {
-                Scheduler::new_singular(
-                    args.max_concurrency,
-                    args.max_memory_size,
-                    args.model_timeout,
-                    ModelProducer::new(offline_large_vlm_model),
-                )
+                ModelProducer::new(async || Ok(OllamaRunTask::default().pull_models().await?))
             } else {
-                Scheduler::new(
-                    args.max_concurrency,
-                    args.max_memory_size,
-                    args.model_timeout,
-                    ModelProducer::new(offline_vlm_model),
-                    ModelProducer::new(offline_lm_model),
-                )
+                ModelProducer::new(async || Ok(OllamaRunTask::default().pull_models().await?))
             }
         } else if args.large_model {
-            Scheduler::new_singular(
-                args.max_concurrency,
-                args.max_memory_size,
-                args.model_timeout,
-                ModelProducer::new(large_vlm_model),
-            )
+            ModelProducer::new(async || Ok(OllamaRunTask::default().pull_models().await?))
         } else {
-            Scheduler::new(
-                args.max_concurrency,
-                args.max_memory_size,
-                args.model_timeout,
-                ModelProducer::new(default_vlm_model),
-                ModelProducer::new(default_lm_model),
-            )
+            ModelProducer::new(async || Ok(OllamaRunTask::default().pull_models().await?))
         };
         Self {
             auth_key: args.auth_key.clone(),
-            scheduler: Arc::new(scheduler),
+            scheduler: Arc::new(Scheduler::new(
+                args.max_concurrency,
+                args.max_memory_size,
+                args.model_timeout,
+                runner,
+            )),
         }
     }
 
@@ -60,7 +36,7 @@ impl AppState {
         &self.auth_key
     }
 
-    pub fn scheduler(&self) -> &Scheduler {
+    pub fn scheduler(&self) -> &Scheduler<OllamaRunTask> {
         self.scheduler.as_ref()
     }
 }

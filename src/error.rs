@@ -1,7 +1,6 @@
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use axum_extra::typed_header::TypedHeaderRejection;
 use image::ImageError;
-use llama_runner::error::RunnerError;
 use serde_json::json;
 use strum::Display;
 use thiserror::Error;
@@ -70,12 +69,10 @@ where
 
 #[derive(Debug, Error)]
 pub enum RunTaskError {
-    #[error("{0}")]
-    Generic(#[from] anyhow::Error),
+    #[error("prepare: {0}")]
+    Prepare(anyhow::Error),
     #[error("runner: {0}")]
-    Runner(#[from] RunnerError),
-    #[error("empty amount, model responded with {0}")]
-    EmptyAmount(String),
+    Runner(anyhow::Error),
     #[error("invalid image in request: {0}")]
     InvalidInputImage(#[from] ImageError),
     #[error("invalid LLM output for {0}")]
