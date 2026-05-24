@@ -51,14 +51,10 @@
       # A Nixpkgs overlay.
       overlay =
         final: prev:
-        let
-          gpuFeatures = if final.stdenv.hostPlatform.isDarwin then [ "metal" ] else [ "cuda" ];
-        in
         {
           ledoxide = final.callPackage (import ./nix/package.nix) {
             inherit crane;
             inherit version;
-            features = gpuFeatures;
           };
         };
 
