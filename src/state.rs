@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use crate::{args, models::ModelProducer, schedule::Scheduler, task::ollama::OllamaRunTask};
+use ollama_rs::Ollama;
+
+use crate::{
+    args, ext::FromEnvVars, models::ModelProducer, schedule::Scheduler, task::ollama::OllamaRunTask,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -10,14 +14,29 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(args: &args::App) -> Self {
+        const GEMMA_4_26B: &str = "gemma4:26b";
         let runner = if args.offline {
             if args.large_model {
-                ModelProducer::new(async || Ok(OllamaRunTask::default().pull_models().await?))
+                ModelProducer::new(async || {
+                    Ok(OllamaRunTask {
+                        ollama: Ollama::from_env_vars(),
+                        caption_model: GEMMA_4_26B.into(),
+                        extract_model: GEMMA_4_26B.into(),
+                    })
+                })
             } else {
-                ModelProducer::new(async || Ok(OllamaRunTask::default().pull_models().await?))
+                ModelProducer::new(async || Ok(OllamaRunTask::default()))
             }
         } else if args.large_model {
-            ModelProducer::new(async || Ok(OllamaRunTask::default().pull_models().await?))
+            ModelProducer::new(async || {
+                Ok(OllamaRunTask {
+                    ollama: Ollama::from_env_vars(),
+                    caption_model: GEMMA_4_26B.into(),
+                    extract_model: GEMMA_4_26B.into(),
+                }
+                .pull_models()
+                .await?)
+            })
         } else {
             ModelProducer::new(async || Ok(OllamaRunTask::default().pull_models().await?))
         };

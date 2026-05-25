@@ -24,6 +24,7 @@ mod models;
 mod schedule;
 mod state;
 mod task;
+mod ext;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {

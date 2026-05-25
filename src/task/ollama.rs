@@ -25,6 +25,7 @@ use smol_str::{SmolStr, ToSmolStr};
 use zip::ZipArchive;
 
 use crate::bill::Category;
+use crate::ext::FromEnvVars;
 use crate::{
     bill::Bill,
     error::{CreateTaskError, RunTaskError},
@@ -46,14 +47,12 @@ pub struct OllamaTaskDescriptor {
     categories: Option<Vec<SmolStr>>,
 }
 
-pub const QWEN_3D5_9B_MODEL_ID: &str = "qwen3.5:9b";
-pub const GEMMA_4_E4B_MODEL_ID: &str = "gemma4:e4b";
 pub const GEMMA_4_E4B_Q4KM: &str = "gemma4:e4b";
 
 impl Default for OllamaRunTask {
     fn default() -> Self {
         Self {
-            ollama: Ollama::default(),
+            ollama: Ollama::from_env_vars(),
             caption_model: GEMMA_4_E4B_Q4KM.into(),
             extract_model: GEMMA_4_E4B_Q4KM.into(),
         }
