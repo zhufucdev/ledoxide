@@ -5,20 +5,30 @@
 
 `ledoxide` is a specialized, client-pulling based HTTP server designed to implement a Vision-Language Model (VLM) based bookkeeping and expense extraction workflow. Its primary goal is to process images of receipts, invoices, or screenshotted transaction records (e.g., social media purchase notifications) and autonomously extract structured billing data: descriptions (notes), exact monetary amounts, and appropriate expense categorization.
 
+The server delegates model execution to an Ollama daemon through the `ollama-rs` API.
+
 ## Usage
 
 The application is containerized and readily available via Docker.
 
 ### Running with Docker
 
-Because `ledoxide` relies on heavy Vision-Language Models executing through `llama.cpp`, running the container with NVIDIA GPU support (`--gpus all`) is highly recommended.
+Run Ollama separately, then point `ledoxide` at that Ollama instance with `OLLAMA_HOST`. The value must be in `host:port` form, without an `http://` or `https://` scheme.
+
+On Docker Desktop, `host.docker.internal:11434` usually reaches Ollama running on the host:
 
 ```bash
 docker run -p 3100:3100 \
-  --gpus all \
-  -e HF_TOKEN="your_huggingface_token" \
+  -e OLLAMA_HOST="host.docker.internal:11434" \
   -e AUTH_KEY="your_secret_bearer_token" \
-  -v $HOME/.cache/huggingface:/huggingface \
+  zhufucdev/ledoxide:latest
+```
+
+On Linux, you can also run the container on the host network and use the default `127.0.0.1:11434` Ollama endpoint:
+
+```bash
+docker run --network host \
+  -e AUTH_KEY="your_secret_bearer_token" \
   zhufucdev/ledoxide:latest
 ```
 
@@ -50,7 +60,7 @@ Add this repo as flake input and use the provided service.
             services.ledoxide = {
               enable = true;
               authKey = "your_secret_bearer_token";
-              extraEnv = "HF_HOME=/var/lib/hf-hub";
+              extraEnv = "OLLAMA_HOST=127.0.0.1:11434";
             };
           },
           ledoxide.nixosModules.ledoxide # omit this if you only want the standalone package!
@@ -63,24 +73,24 @@ Add this repo as flake input and use the provided service.
 
 ### Environment Variables
 
-| Variable      | Description                                                                                                                                                     |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `AUTH_KEY`    | Used as the Bearer token to protect endpoints. If not provided via flag or env var, a random key is generated and logged on startup.                            |
-| `HF_HOME`     | Directory for Hugging Face cache (Defaults to `/huggingface` inside the Docker image). Crucial for caching the heavy LLM/VLM models between container restarts. |
-| `HF_TOKEN`    | Required for downloading models from Hugging Face if they are gated or to avoid rate limits.                                                                    |
-| `HF_ENDPOINT` | Can be used to set a custom Hugging Face proxy endpoint.                                                                                                        |
-| `RUST_LOG`    | Set to `debug` to enable verbose logging, including underlying `llama.cpp` inference logs.                                                                      |
+| Variable      | Description                                                                                                                          |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `AUTH_KEY`    | Used as the Bearer token to protect endpoints. If not provided via flag or env var, a random key is generated and logged on startup. |
+| `OLLAMA_HOST` | Ollama endpoint in `host:port` form. Defaults to `127.0.0.1:11434`. Do not include a URL scheme.                                    |
+| `RUST_LOG`    | Set to `debug` to enable verbose application logging, including prompts and Ollama responses.                                        |
 
 ### CLI Arguments
 
 When running natively or overriding the Docker command, the following arguments are supported:
 
 - `-b, --bind <BIND>`: The address to bind to (default: `127.0.0.1:3100`).
-- `-c, --categories <CATEGORIES>`: A list of valid categories for expenses (defaults: Groceries, Transport, Rent, Entertainment, Shopping, Drink, Food).
-- `--max-concurrency <N>`: Maximum number of models to run simultaneously (default: 4).
-- `--large-model`: Instructs the server to use a larger vision model configuration.
+- `-a, --auth-key <AUTH_KEY>`: Bearer token for protected endpoints. If omitted, `AUTH_KEY` is read from the environment or a random key is generated.
+- `-c, --categories <CATEGORIES>`: A list of valid categories for expenses (defaults include Groceries, Transport, Rent, Entertainment, Shopping, Drink, and Food).
+- `--max-concurrency <N>`: Maximum number of concurrent Ollama task runners (default: 4).
+- `--max-memory-size <N>`: Number of finished task records to keep in memory before swapping older records to disk (default: 468,000).
+- `--large-model`: Use the larger Ollama model configuration (`gemma4:26b` instead of `gemma4:e4b`).
 - `--model-timeout-minutes <MINS>`: Time before an inactive model is evicted from RAM/VRAM to save resources (default: 5).
-- `--offline`: Prevents reaching out to Hugging Face; forces the use of locally cached models only.
+- `--offline`: Do not ask Ollama to pull or create models on startup; requires the configured models to already exist in Ollama.
 
 ## API Endpoints
 
@@ -90,7 +100,7 @@ The server exposes a simple REST API:
   Returns the server package name and version string.
 
 - `POST /create_task`
-  Accepts a `multipart/form-data` payload containing an image file (key: `image`) and optionally `lm_sampling` and `vlm_sampling` JSON parameters.
+  Accepts a `multipart/form-data` payload containing an image file or zip archive (key: `image`) and optionally `lm_options`, `vlm_options`, and `categories` JSON fields.
   _Requires:_ `Authorization: Bearer <AUTH_KEY>` header.
   _Returns:_ A JSON `TaskControlBlock` containing a unique task ID indicating the task is pending.
 
@@ -102,17 +112,18 @@ The server exposes a simple REST API:
 ## Implementation Details
 
 - **Architecture:** The application is written in Rust, leveraging `tokio` for its async runtime and `axum` for HTTP routing.
-- **Inference Engine:** It uses `llama-cpp-2` for efficient local inference and `hf-hub` for model distribution management. It heavily utilizes LLM grammar constraints (`llguidance` and `.lark` schema files) to strictly enforce output formatting (ensuring numbers are extracted cleanly and categories strictly match the configured list).
-- **Model Pipeline:** The standard pipeline involves a Vision Model (defaulting to `Qwen3-VL-4B-Instruct-GGUF`) that extracts a highly detailed text description of the uploaded image. This description is then piped into a smaller Text Model (defaulting to `gemma-3-1b-it-qat-q4_0-gguf`) that runs targeted prompts to extract the summary notes, numeric amount, and category.
+- **Inference API:** It uses `ollama-rs` to call an external Ollama daemon. Ollama owns model downloads, quantization, GPU/CPU execution, and model residency.
+- **Structured Output:** Extraction requests use Ollama structured JSON formats backed by Rust schemas to keep notes, amount, and category parsing strict.
+- **Model Pipeline:** The default pipeline uses `gemma4:e4b` for captioning and extraction. With `--large-model`, both stages use `gemma4:26b`.
 
 ## Caching Strategies & Resource Management
 
-- **Model Memory Timeout:** To preserve system RAM and GPU VRAM, `ledoxide` wraps its loaded models in a `TimedModel` construct. If a model remains unused for the configurable timeout period (default 5 minutes), it is automatically dropped from memory and will be seamlessly reloaded from disk on the next request.
+- **Model Memory Timeout:** To preserve system RAM and GPU VRAM, `ledoxide` unloads inactive Ollama models after the configurable timeout period (default 5 minutes). Ollama reloads them on the next request.
 - **Task Swapping:** To prevent the server's memory from bloating with historical task data over long uptimes, the internal `Scheduler` implements an on-disk swap queue. When the in-memory finished queue exceeds `--max-memory-size` (default: 468,000 items), older finished tasks are serialized using `postcard` and flushed to a temporary swap file on disk. The `/get_task` endpoint streams over both active memory and the disk swap seamlessly.
-- **Hugging Face Mount:** To prevent redownloading multi-gigabyte `.gguf` files, it is vital to mount the `HF_HOME` cache to persistent host storage when using Docker.
+- **Model Pulling:** Unless `--offline` is set, startup checks Ollama for the configured models and pulls or creates them when missing. Ollama manages its own model storage.
 
 ## Minor Caveats
 
 - **Task Removal:** Finished tasks remain in memory or the on-disk swap file indefinitely. There is currently no API to "delete" or "acknowledge" a task to free its disk footprint once retrieved. Over extreme uptimes on busy servers, the swap file could grow continuously.
-- **CUDA Optimization:** Depending on your GPU architecture, the Docker image may trigger a warning about an unsupported `UPSCALE` operator in the `MTL0` backend for CLIP execution, though inference typically falls back gracefully. Flash Attention is enabled by default to mitigate this footprint.
-- **Gated Model:** Attempts to download Gemma 3 would fail without specifying a valid `HF_TOKEN`. You can visit a [Gemma repo](https://huggingface.co/google/gemma-3-4b-it) to see if you have access.
+- **Ollama Availability:** `ledoxide` expects Ollama to be reachable before tasks are created. If `OLLAMA_HOST` points at the wrong address or the daemon is down, model pulls and task execution will fail.
+- **Model Availability:** The default model is `gemma4:e4b`; `--large-model` uses `gemma4:26b`. If these models are not available from your Ollama registry or local store, pre-create compatible models or run with models already present and `--offline`.
