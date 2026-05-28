@@ -1,4 +1,5 @@
 use ollama_rs::Ollama;
+use reqwest::Url;
 
 pub trait FromEnvVars {
     fn from_env_vars() -> Self;
@@ -6,10 +7,10 @@ pub trait FromEnvVars {
 
 impl FromEnvVars for Ollama {
     fn from_env_vars() -> Self {
-        if let Ok(var) = std::env::var("OLLAMA_HOST") {
-            let (host, port) = var.split_once(':').expect("invalid OLLAMA_HOST");
-            return Ollama::new(host, port.parse().expect("invalid port in OLLAMA_HOST"));
+        if let Ok(var) = std::env::var("OLLAMA_ENDPOINT") {
+            let url = Url::parse(&var).expect("invalid OLLAMA_ENDPOINT");
+            return Ollama::from_url(url);
         }
-        Ollama::new("127.0.0.1", 11434)
+        Ollama::new("http://127.0.0.1", 11434)
     }
 }
