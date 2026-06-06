@@ -27,6 +27,11 @@ in
       default = null;
       description = "File storing the secret authorization key, formatting `AUTH_KEY=[a-zA-Z_-]{31,}`";
     };
+    largeModel = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Use gemma4 12b instead of e4b";
+    };
     extraEnv = lib.mkOption {
       default = null;
       type = lib.types.nullOr lib.types.envVar;
@@ -50,6 +55,7 @@ in
           (lib.getExe cfg.package)
           (lib.optionalString (cfg.bind != null) "--bind ${cfg.bind}")
           (lib.optionalString (cfg.authKey != null) "--auth-key ${cfg.authKey}")
+          (lib.optionalString cfg.largeModel "--large-model")
         ];
         EnvironmentFile = lib.optional (cfg.authKeyFile != null) cfg.authKeyFile;
         Environment = lib.optional (cfg.extraEnv != null) cfg.extraEnv;
