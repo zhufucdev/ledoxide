@@ -14,14 +14,14 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(args: &args::App) -> Self {
-        const GEMMA_4_26B: &str = "gemma4:26b";
+        const GEMMA_4_12B: &str = "gemma4:12b";
         let runner = if args.offline {
             if args.large_model {
                 ModelProducer::new(async || {
                     Ok(OllamaRunTask {
                         ollama: Ollama::from_env_vars(),
-                        caption_model: GEMMA_4_26B.into(),
-                        extract_model: GEMMA_4_26B.into(),
+                        caption_model: GEMMA_4_12B.into(),
+                        extract_model: GEMMA_4_12B.into(),
                     })
                 })
             } else {
@@ -31,8 +31,8 @@ impl AppState {
             ModelProducer::new(async || {
                 Ok(OllamaRunTask {
                     ollama: Ollama::from_env_vars(),
-                    caption_model: GEMMA_4_26B.into(),
-                    extract_model: GEMMA_4_26B.into(),
+                    caption_model: GEMMA_4_12B.into(),
+                    extract_model: GEMMA_4_12B.into(),
                 }
                 .pull_models()
                 .await?)
