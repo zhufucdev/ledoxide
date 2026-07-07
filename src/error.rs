@@ -70,7 +70,7 @@ where
 #[derive(Debug, Error)]
 pub enum RunTaskError {
     #[error("prepare: {0}")]
-    Prepare(anyhow::Error),
+    Prepare(#[from] ollama_rs::error::OllamaError),
     #[error("runner: {0}")]
     Runner(anyhow::Error),
     #[error("invalid image in request: {0}")]

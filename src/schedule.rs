@@ -17,11 +17,7 @@ use tokio::{
 };
 use tracing::{Level, event};
 
-use crate::{
-    error::RunTaskError,
-    models::{ModelProducer, TimedModel},
-    task::{self, RunTask, TaskControlBlock},
-};
+use crate::task::{self, RunTask, TaskControlBlock};
 
 struct ScheduleQueues<Task> {
     active: Arc<Mutex<Vec<(TaskControlBlock, JoinHandle<()>)>>>,
@@ -34,7 +30,7 @@ pub struct Scheduler<Runner: RunTask> {
     swap_file: Arc<Mutex<File>>,
     max_memory_size: usize,
     max_concurrency: usize,
-    runner: Arc<TimedModel<Runner>>,
+    runner: Runner,
 }
 
 impl<Runner> Scheduler<Runner>
@@ -44,22 +40,22 @@ where
     pub fn new(
         max_concurrency: usize,
         max_memory_size: usize,
-        model_timeout: Duration,
-        runner: ModelProducer<Runner>,
+        _model_timeout: Duration,
+        runner: Runner,
     ) -> Self {
         Self {
             queues: Default::default(),
             max_memory_size,
             swap_file: Arc::new(Mutex::new(tempfile().map(File::from_std).unwrap())),
             max_concurrency,
-            runner: Arc::new(TimedModel::new(model_timeout, runner)),
+            runner,
         }
     }
 }
 
 impl<Runner> Scheduler<Runner>
 where
-    Runner: RunTask + Send + Sync + 'static,
+    Runner: RunTask + Send + Sync + Clone + 'static,
     Runner::TaskDescriptor: Send + Sync + 'static,
 {
     pub async fn create_task(&self, descriptor: Runner::TaskDescriptor) -> TaskControlBlock {
@@ -93,7 +89,7 @@ where
                 active_queue.push((
                     tcb.clone(),
                     tokio::spawn(async move {
-                        let job = async { runner.get_model().await.map_err(RunTaskError::Prepare)?.extract(&descriptor).await }.await;
+                        let job = async { runner.extract(&descriptor).await }.await;
                         tcb.set_state(task::State::Finished(
                             match job {
                                 Ok(bill) => Ok(task::Success(bill)),
@@ -212,7 +208,7 @@ where
             4,
             468_000, // approx. 50 megabytes
             Duration::from_mins(5),
-            ModelProducer::new(async || Ok(Default::default())),
+            Default::default(),
         )
     }
 }
@@ -234,6 +230,7 @@ mod tests {
 
     use crate::{
         bill::{Bill, Category},
+        error::RunTaskError,
         task::TaskDescriptor,
     };
 
@@ -273,7 +270,7 @@ mod tests {
     }
 
     struct MockTaskDescriptor;
-    #[derive(Default)]
+    #[derive(Default, Clone)]
     struct MockRunner;
 
     impl TaskDescriptor for MockTaskDescriptor {

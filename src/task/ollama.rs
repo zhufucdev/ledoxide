@@ -10,7 +10,7 @@ use ollama_rs::generation::images::Image;
 use ollama_rs::generation::parameters::{
     FormatType, JsonSchema, JsonStructure, KeepAlive, TimeUnit,
 };
-use ollama_rs::models::create::{CreateModelRequest, QuantizationType};
+use ollama_rs::models::create::CreateModelRequest;
 use schemars::json_schema;
 use std::borrow::Cow;
 use std::fmt::Display;
@@ -37,6 +37,7 @@ pub struct OllamaRunTask {
     pub ollama: Ollama,
     pub caption_model: SmolStr,
     pub extract_model: SmolStr,
+    pub offline: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -55,12 +56,13 @@ impl Default for OllamaRunTask {
             ollama: Ollama::from_env_vars(),
             caption_model: GEMMA_4_E4B_Q4KM.into(),
             extract_model: GEMMA_4_E4B_Q4KM.into(),
+            offline: false,
         }
     }
 }
 
 impl OllamaRunTask {
-    pub async fn pull_models(self) -> Result<Self, OllamaError> {
+    pub async fn pull_models(&self) -> Result<(), OllamaError> {
         futures::future::try_join_all(
             [self.extract_model.clone(), self.caption_model.clone()]
                 .into_iter()
@@ -94,7 +96,7 @@ impl OllamaRunTask {
                 }),
         )
         .await?;
-        Ok(self)
+        Ok(())
     }
 
     pub async fn unload_models(&self) -> Result<(), OllamaError> {
@@ -126,6 +128,11 @@ impl RunTask for OllamaRunTask {
     type TaskDescriptor = OllamaTaskDescriptor;
 
     async fn extract(&self, task: &Self::TaskDescriptor) -> Result<Bill, RunTaskError> {
+        if !self.offline {
+            event!(Level::INFO, "pulling models");
+            self.pull_models().await?;
+        }
+
         let prompt = include_str!("../../prompt/description.md");
         let ims = task
             .images()
@@ -431,7 +438,7 @@ mod tests {
                 "Rent".into(),
             ]),
         };
-        let runner = OllamaRunTask::default().pull_models().await.unwrap();
+        let runner = OllamaRunTask::default();
         let bill = runner.extract(&req).await.unwrap();
         event!(Level::INFO, "{:#?}", bill);
     }

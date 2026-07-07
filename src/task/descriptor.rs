@@ -71,7 +71,7 @@ impl<'de> Deserialize<'de> for State {
         match s.as_str() {
             "pending" => Ok(State::Pending),
             "running" => Ok(State::Running),
-            "finished" => Ok(State::Finished(Err(Arc::new(RunTaskError::Prepare(
+            "finished" => Ok(State::Finished(Err(Arc::new(RunTaskError::Runner(
                 anyhow::anyhow!("deserialized finished state without result"),
             ))))),
             _ => Err(serde::de::Error::custom(format!("unknown state: {}", s))),
@@ -124,7 +124,7 @@ impl<'de> Deserialize<'de> for TaskControlBlock {
                 if let Some(success) = data.success {
                     State::Finished(Ok(success))
                 } else if let Some(error) = data.error {
-                    State::Finished(Err(Arc::new(RunTaskError::Prepare(anyhow::anyhow!(error)))))
+                    State::Finished(Err(Arc::new(RunTaskError::Runner(anyhow::anyhow!(error)))))
                 } else {
                     return Err(serde::de::Error::custom(
                         "finished state without success or error",

@@ -20,7 +20,6 @@ mod args;
 mod bill;
 mod error;
 mod key;
-mod models;
 mod schedule;
 mod state;
 mod task;

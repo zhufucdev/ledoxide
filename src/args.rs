@@ -1,9 +1,8 @@
 use std::time::Duration;
 
 use clap::Parser;
-use tracing::{Level, event, trace};
 
-use crate::key;
+use crate::{key, task::ollama::GEMMA_4_E4B_Q4KM};
 
 #[derive(Debug, Parser)]
 #[command(version = option_env!("APP_VERSION"), about, long_about = None)]
@@ -18,9 +17,12 @@ pub struct Cli {
         short, long,
         default_values_t = ["Gorceries".to_string(), "Transport".to_string(), "Rent".to_string(), "Entertainment".to_string(), "Shopping".to_string(), "Drink".to_string(), "Food".to_string(), "Drink".to_string()])]
     pub categories: Vec<String>,
-    /// Use larger language models
-    #[arg(long, default_value_t = false)]
-    pub large_model: bool,
+    /// Caption model for describing screenshots
+    #[arg(long, default_value = GEMMA_4_E4B_Q4KM)]
+    pub caption_model: String,
+    /// Extract model for amount & category analysis
+    #[arg(long, default_value = GEMMA_4_E4B_Q4KM)]
+    pub extract_model: String,
     /// Number of concurrent model executions
     #[arg(long, default_value_t = 4)]
     pub max_concurrency: usize,
@@ -38,7 +40,8 @@ pub struct Cli {
 #[derive(Debug, Clone)]
 pub struct App {
     pub auth_key: String,
-    pub large_model: bool,
+    pub caption_model: String,
+    pub extract_model: String,
     pub max_concurrency: usize,
     pub max_memory_size: usize,
     pub model_timeout: Duration,
@@ -49,7 +52,8 @@ impl Default for App {
     fn default() -> Self {
         Self {
             auth_key: String::new(),
-            large_model: false,
+            caption_model: GEMMA_4_E4B_Q4KM.into(),
+            extract_model: GEMMA_4_E4B_Q4KM.into(),
             max_concurrency: 4,
             max_memory_size: 468_000,
             model_timeout: Duration::from_mins(5),
@@ -72,7 +76,8 @@ impl From<Cli> for App {
                     }
                 },
             },
-            large_model: value.large_model,
+            caption_model: value.caption_model,
+            extract_model: value.extract_model,
             max_concurrency: value.max_concurrency,
             max_memory_size: value.max_memory_size,
             model_timeout: Duration::from_secs_f32(value.model_timeout_minutes * 60f32),

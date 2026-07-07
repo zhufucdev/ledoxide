@@ -1,10 +1,9 @@
 use std::sync::Arc;
 
 use ollama_rs::Ollama;
+use smol_str::ToSmolStr;
 
-use crate::{
-    args, ext::FromEnvVars, models::ModelProducer, schedule::Scheduler, task::ollama::OllamaRunTask,
-};
+use crate::{args, ext::FromEnvVars, schedule::Scheduler, task::ollama::OllamaRunTask};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -14,31 +13,13 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(args: &args::App) -> Self {
-        const GEMMA_4_12B: &str = "gemma4:12b";
-        let runner = if args.offline {
-            if args.large_model {
-                ModelProducer::new(async || {
-                    Ok(OllamaRunTask {
-                        ollama: Ollama::from_env_vars(),
-                        caption_model: GEMMA_4_12B.into(),
-                        extract_model: GEMMA_4_12B.into(),
-                    })
-                })
-            } else {
-                ModelProducer::new(async || Ok(OllamaRunTask::default()))
-            }
-        } else if args.large_model {
-            ModelProducer::new(async || {
-                Ok(OllamaRunTask {
-                    ollama: Ollama::from_env_vars(),
-                    caption_model: GEMMA_4_12B.into(),
-                    extract_model: GEMMA_4_12B.into(),
-                }
-                .pull_models()
-                .await?)
-            })
-        } else {
-            ModelProducer::new(async || Ok(OllamaRunTask::default().pull_models().await?))
+        let caption_model = args.caption_model.to_smolstr();
+        let extract_model = args.extract_model.to_smolstr();
+        let runner = OllamaRunTask {
+            ollama: Ollama::from_env_vars(),
+            caption_model: caption_model.clone(),
+            extract_model: extract_model.clone(),
+            offline: args.offline,
         };
         Self {
             auth_key: args.auth_key.clone(),
