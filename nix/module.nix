@@ -62,6 +62,7 @@ in
           (lib.optionalString (cfg.authKey != null) "--auth-key ${cfg.authKey}")
           (lib.optionalString (cfg.extractModel != null) "--extract-model ${cfg.extractModel}")
           (lib.optionalString (cfg.captionModel != null) "--caption-model ${cfg.captionModel}")
+          (lib.optionalString (cfg.extraOpts != null) cfg.extraOpts)
         ];
         EnvironmentFile = lib.optional (cfg.authKeyFile != null) cfg.authKeyFile;
         Environment = lib.optional (cfg.extraEnv != null) cfg.extraEnv;
