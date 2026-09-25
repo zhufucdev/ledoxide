@@ -55,17 +55,34 @@
           ledoxide = final.callPackage (import ./nix/package.nix) {
             inherit crane;
             inherit version;
+            features = [ "ollama" ];
+          };
+          ledoxide-openai = final.callPackage (import ./nix/package.nix) {
+            inherit crane;
+            inherit version;
+            features = [ "openai" ];
           };
         };
 
       # Provide some binary packages for selected system types.
       packages = forAllSystems (system: {
         default = nixpkgsFor.${system}.ledoxide;
+        openai = nixpkgsFor.${system}.ledoxide-openai;
       });
 
       # A NixOS module, if applicable (e.g. if the package provides a system service).
       nixosModules = {
         ledoxide = import ./nix/module.nix;
+        package =
+          { pkgs, ... }:
+          {
+            nixpkgs.overlays = [ self.overlay ];
+          };
+      };
+
+      # nix-darwin modules for macOS (launchd service).
+      darwinModules = {
+        ledoxide = import ./nix/darwin-module.nix;
         package =
           { pkgs, ... }:
           {
