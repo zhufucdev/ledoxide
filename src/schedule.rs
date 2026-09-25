@@ -33,6 +33,21 @@ pub struct Scheduler<Runner: RunTask> {
     runner: Runner,
 }
 
+impl<Runner> Clone for Scheduler<Runner>
+where
+    Runner: RunTask + Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            queues: self.queues.clone(),
+            swap_file: self.swap_file.clone(),
+            max_memory_size: self.max_memory_size,
+            max_concurrency: self.max_concurrency,
+            runner: self.runner.clone(),
+        }
+    }
+}
+
 impl<Runner> Scheduler<Runner>
 where
     Runner: RunTask,
@@ -131,8 +146,7 @@ where
         let stream = stream::iter(aq.iter().map(|(task, _)| task).cloned())
             .chain(stream::iter(pq.iter().cloned().map(|(task, _)| task)))
             .chain(stream::iter(fq.iter().cloned()))
-            .map(|task| Ok(task))
-            .chain(self.in_disk_queue_iter());
+            .map(|task| Ok::<TaskControlBlock, anyhow::Error>(task));
         pin!(stream);
         while let Some(task) = stream.try_next().await? {
             if task.id() == task_id.as_ref() {
@@ -225,7 +239,9 @@ impl<Task> Default for ScheduleQueues<Task> {
 
 #[cfg(test)]
 mod tests {
-    use smol_str::SmolStr;
+    use std::iter;
+
+use smol_str::SmolStr;
     use tracing_test::traced_test;
 
     use crate::{
@@ -274,12 +290,12 @@ mod tests {
     struct MockRunner;
 
     impl TaskDescriptor for MockTaskDescriptor {
-        fn images(&self) -> Vec<&[u8]> {
-            Vec::new()
+        fn images(&self) -> Box<[&[u8]]> {
+            Box::new([])
         }
 
-        fn category_names(&self) -> Vec<SmolStr> {
-            Vec::new()
+        fn category_names(&self) -> Box<[SmolStr]> {
+            Box::new([])
         }
     }
 

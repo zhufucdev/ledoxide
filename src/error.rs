@@ -5,6 +5,9 @@ use serde_json::json;
 use strum::Display;
 use thiserror::Error;
 
+#[cfg(feature = "openai")]
+use async_openai::error::OpenAIError;
+
 #[derive(Debug, Error)]
 pub enum AuthError {
     #[error("invalid key")]
@@ -69,8 +72,12 @@ where
 
 #[derive(Debug, Error)]
 pub enum RunTaskError {
+    #[cfg(feature = "ollama")]
     #[error("prepare: {0}")]
     Prepare(#[from] ollama_rs::error::OllamaError),
+    #[cfg(feature = "openai")]
+    #[error("openai: {0}")]
+    OpenAI(#[from] OpenAIError),
     #[error("runner: {0}")]
     Runner(anyhow::Error),
     #[error("invalid image in request: {0}")]

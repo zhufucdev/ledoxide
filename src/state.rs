@@ -1,34 +1,26 @@
-use std::sync::Arc;
-
-use ollama_rs::Ollama;
-use smol_str::ToSmolStr;
-
-use crate::{args, ext::FromEnvVars, schedule::Scheduler, task::ollama::OllamaRunTask};
+use crate::args::App;
+use crate::schedule::Scheduler;
+use crate::task::RunTask;
 
 #[derive(Clone)]
-pub struct AppState {
+pub struct AppState<Runner: RunTask + Clone + Send + Sync + 'static> {
     auth_key: String,
-    scheduler: Arc<Scheduler<OllamaRunTask>>,
+    scheduler: Scheduler<Runner>,
 }
 
-impl AppState {
-    pub fn new(args: &args::App) -> Self {
-        let caption_model = args.caption_model.to_smolstr();
-        let extract_model = args.extract_model.to_smolstr();
-        let runner = OllamaRunTask {
-            ollama: Ollama::from_env_vars(),
-            caption_model: caption_model.clone(),
-            extract_model: extract_model.clone(),
-            offline: args.offline,
-        };
+impl<Runner> AppState<Runner>
+where
+    Runner: RunTask + Clone + Send + Sync + 'static,
+{
+    pub fn new(args: &App, runner: Runner) -> Self {
         Self {
             auth_key: args.auth_key.clone(),
-            scheduler: Arc::new(Scheduler::new(
+            scheduler: Scheduler::new(
                 args.max_concurrency,
                 args.max_memory_size,
                 args.model_timeout,
                 runner,
-            )),
+            ),
         }
     }
 
@@ -36,7 +28,7 @@ impl AppState {
         &self.auth_key
     }
 
-    pub fn scheduler(&self) -> &Scheduler<OllamaRunTask> {
-        self.scheduler.as_ref()
+    pub fn scheduler(&self) -> &Scheduler<Runner> {
+        &self.scheduler
     }
 }

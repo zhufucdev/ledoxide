@@ -2,7 +2,23 @@ use std::time::Duration;
 
 use clap::Parser;
 
-use crate::{key, task::ollama::GEMMA_4_E4B_Q4KM};
+#[cfg(feature = "ollama")]
+use crate::task::ollama::GEMMA_4_E4B_Q4KM;
+
+#[cfg(feature = "openai")]
+use crate::task::openai::{OPENAI_TEXT_MODEL, OPENAI_VISION_MODEL};
+
+#[cfg(feature = "ollama")]
+const DEFAULT_VISION_MODEL: &str = GEMMA_4_E4B_Q4KM;
+
+#[cfg(feature = "ollama")]
+const DEFAULT_TEXT_MODEL: &str = GEMMA_4_E4B_Q4KM;
+
+#[cfg(feature = "openai")]
+const DEFAULT_VISION_MODEL: &str = OPENAI_VISION_MODEL;
+
+#[cfg(feature = "openai")]
+const DEFAULT_TEXT_MODEL: &str = OPENAI_TEXT_MODEL;
 
 #[derive(Debug, Parser)]
 #[command(version = option_env!("APP_VERSION"), about, long_about = None)]
@@ -18,10 +34,10 @@ pub struct Cli {
         default_values_t = ["Gorceries".to_string(), "Transport".to_string(), "Rent".to_string(), "Entertainment".to_string(), "Shopping".to_string(), "Drink".to_string(), "Food".to_string(), "Drink".to_string()])]
     pub categories: Vec<String>,
     /// Caption model for describing screenshots
-    #[arg(long, default_value = GEMMA_4_E4B_Q4KM)]
+    #[arg(long, default_value = DEFAULT_VISION_MODEL)]
     pub caption_model: String,
     /// Extract model for amount & category analysis
-    #[arg(long, default_value = GEMMA_4_E4B_Q4KM)]
+    #[arg(long, default_value = DEFAULT_TEXT_MODEL)]
     pub extract_model: String,
     /// Number of concurrent model executions
     #[arg(long, default_value_t = 4)]
@@ -52,8 +68,8 @@ impl Default for App {
     fn default() -> Self {
         Self {
             auth_key: String::new(),
-            caption_model: GEMMA_4_E4B_Q4KM.into(),
-            extract_model: GEMMA_4_E4B_Q4KM.into(),
+            caption_model: DEFAULT_VISION_MODEL.into(),
+            extract_model: DEFAULT_TEXT_MODEL.into(),
             max_concurrency: 4,
             max_memory_size: 468_000,
             model_timeout: Duration::from_mins(5),
@@ -70,7 +86,7 @@ impl From<Cli> for App {
                 None => match std::env::var("AUTH_KEY") {
                     Ok(key) => key,
                     Err(_) => {
-                        let random_key = key::generate_random_key();
+                        let random_key = crate::key::generate_random_key();
                         println!("missing authorization key, using a random one: {random_key}");
                         random_key
                     }

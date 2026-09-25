@@ -5,16 +5,20 @@ use axum_extra::{
 };
 use rand::{RngExt, rngs::StdRng};
 
-use crate::{error, state::AppState};
+use crate::{error, state::AppState, task::RunTask};
 
 pub struct ValidKey {}
 
-impl FromRequestParts<AppState> for ValidKey {
+impl<Runner> FromRequestParts<AppState<Runner>> for ValidKey
+where
+    Runner: RunTask + Clone + Send + Sync + 'static,
+    Runner::TaskDescriptor: Send + Sync,
+{
     type Rejection = error::AuthError;
 
     async fn from_request_parts(
         parts: &mut axum::http::request::Parts,
-        state: &AppState,
+        state: &AppState<Runner>,
     ) -> Result<Self, Self::Rejection> {
         const VALID_KEY: ValidKey = ValidKey {};
         if state.auth_key().is_empty() {

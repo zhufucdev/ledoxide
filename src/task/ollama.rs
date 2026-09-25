@@ -1,5 +1,6 @@
 use axum::RequestExt;
 use axum::extract::Multipart;
+use axum_extra::headers::Mime;
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
 use encoding_rs::UTF_8;
@@ -25,7 +26,7 @@ use smol_str::{SmolStr, ToSmolStr};
 use zip::ZipArchive;
 
 use crate::bill::Category;
-use crate::ext::FromEnvVars;
+use crate::ext::{ExtractImageBuf, FromEnvVars};
 use crate::{
     bill::Bill,
     error::{CreateTaskError, RunTaskError},
@@ -42,10 +43,10 @@ pub struct OllamaRunTask {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct OllamaTaskDescriptor {
-    images_buf: Vec<Vec<u8>>,
+    images_buf: Box<[Box<[u8]>]>,
     lm_options: Option<ModelOptions>,
     vlm_options: Option<ModelOptions>,
-    categories: Option<Vec<SmolStr>>,
+    categories: Option<Box<[SmolStr]>>,
 }
 
 pub const GEMMA_4_E4B_Q4KM: &str = "gemma4:e4b";
@@ -266,19 +267,19 @@ impl RunTask for OllamaRunTask {
 }
 
 impl TaskDescriptor for OllamaTaskDescriptor {
-    fn images(&self) -> Vec<&[u8]> {
+    fn images(&self) -> Box<[&[u8]]> {
         self.images_buf
             .iter()
-            .map(|buf| buf.as_slice())
-            .collect::<Vec<_>>()
+            .map(|buf| buf.as_ref())
+            .collect::<Box<_>>()
     }
 
-    fn category_names(&self) -> Vec<SmolStr> {
+    fn category_names(&self) -> Box<[SmolStr]> {
         self.categories.clone().unwrap_or_else(|| {
             Category::all_cases()
                 .iter()
                 .map(|c| c.name().into())
-                .collect::<Vec<_>>()
+                .collect::<Box<_>>()
         })
     }
 }
@@ -300,34 +301,6 @@ where
     type Rejection = CreateTaskError;
 
     async fn from_request(req: axum::extract::Request, _: &S) -> Result<Self, Self::Rejection> {
-        fn get_images_buf(source: Bytes, mime: &str) -> Result<Vec<Vec<u8>>, CreateTaskError> {
-            if mime.starts_with("image/") {
-                return Ok(vec![source.to_vec()]);
-            } else if !mime.starts_with("application/") {
-                return Err(CreateTaskError::UnspecificContentType(mime.into()));
-            }
-            let mut bufs = Vec::new();
-            let type_name = mime.split_once('/').unwrap().1;
-            match type_name {
-                "zip" | "zip-compressed" => {
-                    let mut archive = ZipArchive::new(Cursor::new(source))?;
-                    for i in 0..archive.len() {
-                        let item = archive.by_index(i)?;
-                        if item.is_file() {
-                            bufs.push(item.bytes().collect::<Result<Vec<_>, _>>()?);
-                        } else {
-                            return Err(ZipError::InvalidArchive(Cow::Owned(
-                                "accept files only, got dir / symlink".into(),
-                            ))
-                            .into());
-                        }
-                    }
-                }
-                _ => return Err(CreateTaskError::UnsupportedFileType(mime.into())),
-            }
-            Ok(bufs)
-        }
-
         let content_type = UTF_8
             .decode(req.headers().get("Content-Type").unwrap().as_bytes())
             .0;
@@ -341,11 +314,11 @@ where
                 let name = field.name().unwrap().to_string();
                 match name.as_str() {
                     "image" => {
-                        let mime = field
+                        let mime: Mime = field
                             .content_type()
                             .ok_or(CreateTaskError::UnspecificContentType("image".to_string()))?
-                            .to_string();
-                        images_buf = Some(get_images_buf(field.bytes().await?, &mime)?);
+                            .parse()?;
+                        images_buf = Some((field.bytes().await?, mime).extract_image_buf()?);
                     }
                     "lm_options" | "vlm_options" => {
                         if let Some(mime) = field.content_type()
@@ -373,7 +346,7 @@ where
                             value
                                 .into_iter()
                                 .map(|name| name.to_smolstr())
-                                .collect::<Vec<_>>(),
+                                .collect::<Box<_>>(),
                         );
                     }
                     _ => {
@@ -382,9 +355,9 @@ where
                 }
             }
         } else {
-            let mime = content_type.to_string();
+            let mime: Mime = content_type.parse()?;
             let buf: Bytes = req.extract().await?;
-            images_buf = Some(get_images_buf(buf, &mime)?);
+            images_buf = Some((buf, mime).extract_image_buf()?);
         }
         if images_buf.is_none() {
             return Err(CreateTaskError::MissingField("image".to_string()));
@@ -428,15 +401,15 @@ mod tests {
     #[traced_test]
     async fn test_extract_default_model() {
         let req = OllamaTaskDescriptor {
-            images_buf: Vec::new(),
+            images_buf: Box::new([]),
             lm_options: None,
             vlm_options: None,
-            categories: Some(vec![
+            categories: Some([
                 "Shopping".into(),
                 "Food".into(),
                 "Transport".into(),
                 "Rent".into(),
-            ]),
+            ].into()),
         };
         let runner = OllamaRunTask::default();
         let bill = runner.extract(&req).await.unwrap();

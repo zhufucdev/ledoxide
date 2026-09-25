@@ -7,8 +7,8 @@ use strum::Display;
 use crate::{bill::Bill, error::RunTaskError, key};
 
 pub trait TaskDescriptor {
-    fn images(&self) -> Vec<&[u8]>;
-    fn category_names(&self) -> Vec<SmolStr>;
+    fn images(&self) -> Box<[&[u8]]>;
+    fn category_names(&self) -> Box<[SmolStr]>;
 }
 
 #[derive(Debug, Clone, Display, Default)]

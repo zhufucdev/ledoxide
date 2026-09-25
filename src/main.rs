@@ -13,17 +13,35 @@ use crate::{
     error::GetTaskError,
     key::ValidKey,
     state::AppState,
-    task::{TaskControlBlock, ollama::OllamaTaskDescriptor},
+    task::TaskControlBlock,
 };
 
 mod args;
 mod bill;
 mod error;
+mod ext;
 mod key;
 mod schedule;
 mod state;
 mod task;
-mod ext;
+
+#[cfg(feature = "ollama")]
+use crate::task::ollama::{OllamaRunTask, OllamaTaskDescriptor};
+
+#[cfg(feature = "openai")]
+use crate::task::openai::{OpenAIRunTask, OpenAITaskDescriptor};
+
+#[cfg(feature = "ollama")]
+type Runner = OllamaRunTask;
+
+#[cfg(not(feature = "ollama"))]
+type Runner = OpenAIRunTask;
+
+#[cfg(feature = "ollama")]
+type TaskDesc = OllamaTaskDescriptor;
+
+#[cfg(not(feature = "ollama"))]
+type TaskDesc = OpenAITaskDescriptor;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
@@ -33,7 +51,9 @@ async fn main() {
     let bind_addr = cli.bind.clone();
     let args: args::App = cli.into();
 
-    let app = app(&args);
+    let runner = build_runner(&args);
+    let state = AppState::new(&args, runner);
+    let app = app().with_state(state);
     let listener = TcpListener::bind(bind_addr).await.expect("failed to bind");
     event!(
         Level::INFO,
@@ -43,7 +63,18 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-fn app(args: &args::App) -> axum::Router {
+fn build_runner(args: &args::App) -> Runner {
+    let mut runner = Runner::default();
+    runner.caption_model = args.caption_model.clone().into();
+    runner.extract_model = args.extract_model.clone().into();
+    #[cfg(feature = "ollama")]
+    {
+        runner.offline = args.offline;
+    }
+    runner
+}
+
+fn app() -> axum::Router<AppState<Runner>> {
     axum::Router::new()
         .route("/", get(index))
         .route(
@@ -51,7 +82,6 @@ fn app(args: &args::App) -> axum::Router {
             post(create_task).layer(DefaultBodyLimit::disable()),
         )
         .route("/get_task/{task_id}", get(get_task))
-        .with_state(AppState::new(args))
 }
 
 async fn index() -> String {
@@ -62,18 +92,17 @@ async fn index() -> String {
     );
 }
 
-#[axum::debug_handler]
 async fn create_task(
     _: ValidKey,
-    state: State<AppState>,
-    task: OllamaTaskDescriptor,
+    state: State<AppState<Runner>>,
+    task: TaskDesc,
 ) -> Json<TaskControlBlock> {
     Json(state.scheduler().create_task(task).await)
 }
 
 async fn get_task(
     _: ValidKey,
-    state: State<AppState>,
+    state: State<AppState<Runner>>,
     Path(GetTaskParams { task_id }): Path<GetTaskParams>,
 ) -> Result<Json<TaskControlBlock>, GetTaskError> {
     state
@@ -114,7 +143,19 @@ mod tests {
             assert_eq!(bill.category, Some("Shopping".into()))
         }
 
-        let mut app = app(&args::App::default()).into_service();
+        let mut args = args::App {
+            auth_key: auth_key.into(),
+            ..args::App::default()
+        };
+        if let Ok(name) = std::env::var("CAPTION_MODEL") {
+            args.caption_model = name.into();
+        }
+        if let Ok(name) = std::env::var("EXTRACT_MODEL") {
+            args.extract_model = name.into();
+        }
+        let runner = build_runner(&args);
+        let state = AppState::new(&args, runner);
+        let mut app = app().with_state(state).into_service();
         let screenshot_path = PathBuf::from_str(env!("CARGO_MANIFEST_DIR"))
             .unwrap()
             .join("asset/second-hand-horse-screenshot.jpeg");

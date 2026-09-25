@@ -1,6 +1,11 @@
-mod descriptor;
-mod run;
+pub mod descriptor;
+pub mod run;
+
+#[cfg(feature = "ollama")]
 pub mod ollama;
 
-pub use descriptor::*;
-pub use run::*;
+#[cfg(feature = "openai")]
+pub mod openai;
+
+pub use descriptor::{State, Success, TaskControlBlock, TaskDescriptor};
+pub use run::RunTask;

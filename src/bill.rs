@@ -4,7 +4,7 @@ use serde::{
     Deserialize, Serialize,
     de::{Unexpected, Visitor},
 };
-use smol_str::SmolStr;
+use smol_str::{SmolStr, ToSmolStr};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bill {
@@ -17,12 +17,12 @@ pub struct Bill {
 pub struct Category(usize);
 
 impl Category {
-    pub fn name(&self) -> String {
+    pub fn name(&self) -> SmolStr {
         CATEGORIES.lock().unwrap().as_ref().unwrap()[self.0].clone()
     }
 
-    pub fn all_cases() -> Vec<Category> {
-        Vec::from_iter(
+    pub fn all_cases() -> Box<[Category]> {
+        Box::from_iter(
             (0..CATEGORIES.lock().unwrap().as_ref().unwrap().len()).map(|idx| Category(idx)),
         )
     }
@@ -43,12 +43,12 @@ impl Category {
         Iter: IntoIterator,
         Iter::Item: AsRef<str>,
     {
-        let names = Vec::from_iter(iter.into_iter().map(|name| name.as_ref().to_string()));
+        let names = Vec::from_iter(iter.into_iter().map(|name| name.as_ref().to_smolstr()));
         *CATEGORIES.lock().unwrap() = Some(names);
     }
 }
 
-static CATEGORIES: LazyLock<Arc<Mutex<Option<Vec<String>>>>> =
+static CATEGORIES: LazyLock<Arc<Mutex<Option<Vec<SmolStr>>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(None)));
 
 impl Serialize for Category {
