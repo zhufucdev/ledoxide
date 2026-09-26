@@ -6,7 +6,8 @@ use async_openai::config::OpenAIConfig;
 use async_openai::types::chat::{
     ChatCompletionRequestMessageContentPartTextArgs, ChatCompletionRequestUserMessageArgs,
     ChatCompletionRequestUserMessageContent, ChatCompletionRequestUserMessageContentPart,
-    CreateChatCompletionRequestArgs, ImageUrlArgs, ResponseFormat, ResponseFormatJsonSchema,
+    CreateChatCompletionRequestArgs, ImageUrlArgs, ReasoningEffort, ResponseFormat,
+    ResponseFormatJsonSchema,
 };
 use axum::RequestExt;
 use axum_extra::headers::Mime;
@@ -64,6 +65,7 @@ impl OpenAIRunTask {
         images: &[&[u8]],
         text: &str,
         response_format: Option<ResponseFormat>,
+        reasoning_effort: ReasoningEffort,
     ) -> Result<String, RunTaskError> {
         let mut parts: Vec<ChatCompletionRequestUserMessageContentPart> =
             images.iter().map(|buf| self.image_part(buf)).collect();
@@ -82,6 +84,7 @@ impl OpenAIRunTask {
         let mut request = CreateChatCompletionRequestArgs::default()
             .model(model)
             .messages([user_message])
+            .reasoning_effort(reasoning_effort)
             .build()?;
 
         if let Some(format) = response_format {
@@ -107,8 +110,9 @@ impl OpenAIRunTask {
         model: &str,
         text: &str,
         response_format: Option<ResponseFormat>,
+        reasoning_effort: ReasoningEffort,
     ) -> Result<String, RunTaskError> {
-        self.chat_with_images(model, &[], text, response_format)
+        self.chat_with_images(model, &[], text, response_format, reasoning_effort)
             .await
     }
 }
@@ -121,7 +125,13 @@ impl RunTask for OpenAIRunTask {
         // Step 1: Generate caption
         let prompt = include_str!("../../prompt/description.md");
         let caption = self
-            .chat_with_images(&self.caption_model, &task.images(), prompt, None)
+            .chat_with_images(
+                &self.caption_model,
+                &task.images(),
+                prompt,
+                None,
+                ReasoningEffort::None,
+            )
             .await?;
         event!(Level::DEBUG, "caption: {}", caption);
 
@@ -142,6 +152,7 @@ impl RunTask for OpenAIRunTask {
                         strict: Some(true),
                     },
                 }),
+                ReasoningEffort::Medium,
             )
             .await?;
         event!(Level::DEBUG, "notes: {}", notes_response);
@@ -192,6 +203,7 @@ impl RunTask for OpenAIRunTask {
                         strict: Some(true),
                     },
                 }),
+                ReasoningEffort::Medium,
             )
             .await?;
         event!(Level::DEBUG, "amount: {}", amount_response);
@@ -218,6 +230,7 @@ impl RunTask for OpenAIRunTask {
                         strict: Some(true),
                     },
                 }),
+                ReasoningEffort::Medium,
             )
             .await?;
         event!(Level::DEBUG, "category: {}", category_response);
@@ -250,14 +263,12 @@ impl TaskDescriptor for OpenAITaskDescriptor {
     }
 
     fn category_names(&self) -> Box<[SmolStr]> {
-        self.categories
-            .clone()
-            .unwrap_or_else(|| {
-                Category::all_cases()
-                    .iter()
-                    .map(|c| c.name())
-                    .collect::<Box<_>>()
-            })
+        self.categories.clone().unwrap_or_else(|| {
+            Category::all_cases()
+                .iter()
+                .map(|c| c.name())
+                .collect::<Box<_>>()
+        })
     }
 }
 
