@@ -282,34 +282,6 @@ where
         use axum::body::Bytes;
         use axum::extract::Multipart;
 
-        fn get_images_buf(source: Bytes, mime: &str) -> Result<Vec<Vec<u8>>, CreateTaskError> {
-            if mime.starts_with("image/") {
-                return Ok(vec![source.to_vec()]);
-            } else if !mime.starts_with("application/") {
-                return Err(CreateTaskError::UnspecificContentType(mime.into()));
-            }
-            let mut bufs = Vec::new();
-            let type_name = mime.split_once('/').unwrap().1;
-            match type_name {
-                "zip" | "zip-compressed" => {
-                    let mut archive = ZipArchive::new(Cursor::new(source))?;
-                    for i in 0..archive.len() {
-                        let item = archive.by_index(i)?;
-                        if item.is_file() {
-                            bufs.push(item.bytes().collect::<Result<Vec<_>, _>>()?);
-                        } else {
-                            return Err(ZipError::InvalidArchive(Cow::Owned(
-                                "accept files only, got dir / symlink".into(),
-                            ))
-                            .into());
-                        }
-                    }
-                }
-                _ => return Err(CreateTaskError::UnsupportedFileType(mime.into())),
-            }
-            Ok(bufs)
-        }
-
         let content_type = req
             .headers()
             .get("Content-Type")
