@@ -1,18 +1,20 @@
 use std::borrow::Cow;
 use std::io::{Cursor, Read as _};
+use std::iter;
 
 use async_openai::Client;
 use async_openai::config::OpenAIConfig;
-use async_openai::types::chat::{
-    ChatCompletionRequestMessageContentPartTextArgs, ChatCompletionRequestUserMessageArgs,
-    ChatCompletionRequestUserMessageContent, ChatCompletionRequestUserMessageContentPart,
-    CreateChatCompletionRequestArgs, ImageUrlArgs, ReasoningEffort, ResponseFormat,
-    ResponseFormatJsonSchema,
+use async_openai::types::responses::{
+    CreateResponseArgs, ImageDetail, InputContent, InputImageContent, InputItem, InputMessage,
+    InputParam, InputRole, Item, MessageItem, Reasoning, ReasoningEffort, ResponseFormat,
+    ResponseFormatJsonSchema, ResponseStreamEvent, ResponseTextParam,
+    TextResponseFormatConfiguration,
 };
 use axum::RequestExt;
 use axum_extra::headers::Mime;
 use base64::Engine;
 use base64::prelude::BASE64_STANDARD;
+use futures::StreamExt as _;
 use schemars::{JsonSchema, json_schema, schema_for};
 use serde::Deserialize;
 use smol_str::{SmolStr, ToSmolStr};
@@ -49,14 +51,14 @@ impl Default for OpenAIRunTask {
 }
 
 impl OpenAIRunTask {
-    fn image_part(&self, buf: &[u8]) -> ChatCompletionRequestUserMessageContentPart {
+    fn image_input_content(&self, buf: &[u8]) -> InputImageContent {
         let data_url = format!("data:image/jpeg;base64,{}", BASE64_STANDARD.encode(buf));
-        let image_part = ImageUrlArgs::default()
-            .url(data_url)
-            .build()
-            .unwrap()
-            .into();
-        ChatCompletionRequestUserMessageContentPart::ImageUrl(image_part)
+        InputImageContent {
+            detail: ImageDetail::Auto,
+            file_id: None,
+            image_url: Some(data_url),
+            prompt_cache_breakpoint: None,
+        }
     }
 
     async fn chat_with_images(
@@ -64,52 +66,70 @@ impl OpenAIRunTask {
         model: impl AsRef<str>,
         images: &[&[u8]],
         text: impl AsRef<str>,
-        response_format: Option<ResponseFormat>,
+        response_format: Option<TextResponseFormatConfiguration>,
         reasoning_effort: ReasoningEffort,
     ) -> Result<String, RunTaskError> {
-        let mut parts: Vec<ChatCompletionRequestUserMessageContentPart> =
-            images.iter().map(|buf| self.image_part(buf)).collect();
-        parts.push(ChatCompletionRequestUserMessageContentPart::Text(
-            ChatCompletionRequestMessageContentPartTextArgs::default()
-                .text(text.as_ref())
-                .build()
-                .unwrap(),
-        ));
-
-        let user_message = ChatCompletionRequestUserMessageArgs::default()
-            .content(ChatCompletionRequestUserMessageContent::Array(parts))
-            .build()?
-            .into();
-
-        let mut request = CreateChatCompletionRequestArgs::default()
+        let input = InputItem::Item(Item::Message(MessageItem::Input(InputMessage {
+            content: iter::once(InputContent::InputText(text.as_ref().into()))
+                .chain(
+                    images
+                        .into_iter()
+                        .map(|buf| InputContent::InputImage(self.image_input_content(buf))),
+                )
+                .collect(),
+            role: InputRole::User,
+            status: None,
+        })));
+        let mut reasoning = Reasoning::default();
+        reasoning.effort = Some(reasoning_effort);
+        let mut request = CreateResponseArgs::default()
             .model(model.as_ref())
-            .messages([user_message])
-            .reasoning_effort(reasoning_effort)
+            .input(input)
+            .reasoning(reasoning)
+            .stream(true)
             .build()?;
 
         if let Some(format) = response_format {
-            request.response_format = Some(format);
+            request.text = Some(ResponseTextParam {
+                format: format,
+                verbosity: None,
+            })
         }
 
-        let response = self
+        let mut response = self
             .client
-            .chat()
-            .create(request)
+            .responses()
+            .create_stream(request)
             .await
             .map_err(|err| RunTaskError::Runner(err.into()))?;
 
-        response
-            .choices
-            .first()
-            .and_then(|c| c.message.content.clone())
-            .ok_or_else(|| RunTaskError::InvalidOutput("empty response".into()))
+        let mut res_text = String::new();
+        while let Some(result) = response.next().await {
+            match result {
+                Ok(ResponseStreamEvent::ResponseOutputTextDelta(event)) => {
+                    event!(Level::TRACE, "{}", &event.delta);
+                    res_text.push_str(&event.delta);
+                }
+                Ok(ResponseStreamEvent::ResponseReasoningSummaryTextDelta(event)) => {
+                    event!(Level::TRACE, "{}", &event.delta);
+                }
+                Err(err) => {
+                    event!(Level::ERROR, "{}", err);
+                    return Err(RunTaskError::Runner(err.into()));
+                }
+                Ok(other) => {
+                    event!(Level::DEBUG, "unknown event: {other:?}");
+                }
+            }
+        }
+        Ok(res_text)
     }
 
     async fn chat_text(
         &self,
         model: impl AsRef<str>,
         text: impl AsRef<str>,
-        response_format: Option<ResponseFormat>,
+        response_format: Option<TextResponseFormatConfiguration>,
         reasoning_effort: ReasoningEffort,
     ) -> Result<String, RunTaskError> {
         self.chat_with_images(model, &[], text, response_format, reasoning_effort)
@@ -138,20 +158,21 @@ impl RunTask for OpenAIRunTask {
         // Step 2: Generate structured notes
         let notes_prompt = format!(include_str!("../../prompt/note_taking.md"), caption);
         let notes_schema = schema_for!(Notes);
+        event!(Level::DEBUG, "notes schema: {:?}", notes_schema);
         let notes_response = self
             .chat_with_images(
                 &self.caption_model,
                 &task.images(),
                 notes_prompt,
-                Some(ResponseFormat::JsonSchema {
-                    json_schema: ResponseFormatJsonSchema {
+                Some(TextResponseFormatConfiguration::JsonSchema(
+                    ResponseFormatJsonSchema {
                         description: Some("Purchase notes".into()),
                         name: "notes".into(),
                         schema: serde_json::to_value(&notes_schema)
                             .map_err(|err| RunTaskError::Runner(err.into()))?,
                         strict: Some(true),
                     },
-                }),
+                )),
                 ReasoningEffort::Medium,
             )
             .await?;
@@ -194,15 +215,15 @@ impl RunTask for OpenAIRunTask {
                     include_str!("../../prompt/amount_extraction.md"),
                     notes, caption
                 ),
-                Some(ResponseFormat::JsonSchema {
-                    json_schema: ResponseFormatJsonSchema {
+                Some(TextResponseFormatConfiguration::JsonSchema(
+                    ResponseFormatJsonSchema {
                         description: Some("Final payment amount".into()),
                         name: "amount".into(),
                         schema: serde_json::to_value(&amount_schema)
                             .map_err(|err| RunTaskError::Runner(err.into()))?,
                         strict: Some(true),
                     },
-                }),
+                )),
                 ReasoningEffort::Medium,
             ),
             self.chat_text(
@@ -217,15 +238,15 @@ impl RunTask for OpenAIRunTask {
                         .collect::<Vec<_>>()
                         .join("\n")
                 ),
-                Some(ResponseFormat::JsonSchema {
-                    json_schema: ResponseFormatJsonSchema {
+                Some(TextResponseFormatConfiguration::JsonSchema(
+                    ResponseFormatJsonSchema {
                         description: Some("Best matching category".into()),
                         name: "category".into(),
                         schema: serde_json::to_value(&category_schema)
                             .map_err(|err| RunTaskError::Runner(err.into()))?,
                         strict: Some(true),
                     },
-                }),
+                )),
                 ReasoningEffort::Medium,
             )
         )?;
@@ -335,18 +356,24 @@ where
 #[derive(JsonSchema, Deserialize)]
 struct Notes {
     name: String,
-    #[schemars(rename = "type")]
-    #[serde(rename = "type")]
-    type_: String,
+    /// Phrases describing the product, such as "Wireless headphones", "Cotton leggings with pink, white, and blue stripes"
+    keywords: Vec<String>,
+    /// Omit if unclear
     retailer: Option<String>,
 }
 
 impl std::fmt::Display for Notes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if let Some(retailer) = &self.retailer {
-            write!(f, "{} \"{}\" from {}", self.type_, self.name, retailer)
+            write!(
+                f,
+                "{} \"{}\" from {}",
+                self.keywords.join(" / "),
+                self.name,
+                retailer
+            )
         } else {
-            write!(f, "{} \"{}\"", self.type_, self.name)
+            write!(f, "{} \"{}\"", self.keywords.join(" / "), self.name)
         }
     }
 }
