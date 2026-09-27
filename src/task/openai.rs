@@ -61,9 +61,9 @@ impl OpenAIRunTask {
 
     async fn chat_with_images(
         &self,
-        model: &str,
+        model: impl AsRef<str>,
         images: &[&[u8]],
-        text: &str,
+        text: impl AsRef<str>,
         response_format: Option<ResponseFormat>,
         reasoning_effort: ReasoningEffort,
     ) -> Result<String, RunTaskError> {
@@ -71,7 +71,7 @@ impl OpenAIRunTask {
             images.iter().map(|buf| self.image_part(buf)).collect();
         parts.push(ChatCompletionRequestUserMessageContentPart::Text(
             ChatCompletionRequestMessageContentPartTextArgs::default()
-                .text(text.to_string())
+                .text(text.as_ref())
                 .build()
                 .unwrap(),
         ));
@@ -82,7 +82,7 @@ impl OpenAIRunTask {
             .into();
 
         let mut request = CreateChatCompletionRequestArgs::default()
-            .model(model)
+            .model(model.as_ref())
             .messages([user_message])
             .reasoning_effort(reasoning_effort)
             .build()?;
@@ -107,8 +107,8 @@ impl OpenAIRunTask {
 
     async fn chat_text(
         &self,
-        model: &str,
-        text: &str,
+        model: impl AsRef<str>,
+        text: impl AsRef<str>,
         response_format: Option<ResponseFormat>,
         reasoning_effort: ReasoningEffort,
     ) -> Result<String, RunTaskError> {
@@ -142,7 +142,7 @@ impl RunTask for OpenAIRunTask {
             .chat_with_images(
                 &self.caption_model,
                 &task.images(),
-                &notes_prompt,
+                notes_prompt,
                 Some(ResponseFormat::JsonSchema {
                     json_schema: ResponseFormatJsonSchema {
                         description: Some("Purchase notes".into()),
@@ -187,10 +187,10 @@ impl RunTask for OpenAIRunTask {
             },
         });
 
-        let amount_response = self
-            .chat_text(
+        let (amount_response, category_response) = futures::try_join!(
+            self.chat_text(
                 &self.extract_model,
-                &format!(
+                format!(
                     include_str!("../../prompt/amount_extraction.md"),
                     notes, caption
                 ),
@@ -204,14 +204,10 @@ impl RunTask for OpenAIRunTask {
                     },
                 }),
                 ReasoningEffort::Medium,
-            )
-            .await?;
-        event!(Level::DEBUG, "amount: {}", amount_response);
-
-        let category_response = self
-            .chat_text(
+            ),
+            self.chat_text(
                 &self.extract_model,
-                &format!(
+                format!(
                     include_str!("../../prompt/categorization.md"),
                     notes,
                     caption,
@@ -232,7 +228,8 @@ impl RunTask for OpenAIRunTask {
                 }),
                 ReasoningEffort::Medium,
             )
-            .await?;
+        )?;
+        event!(Level::DEBUG, "amount: {}", amount_response);
         event!(Level::DEBUG, "category: {}", category_response);
 
         let structured_amount = serde_json::from_str::<Amount>(&amount_response)
