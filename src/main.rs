@@ -51,6 +51,11 @@ async fn main() {
             split.next().map(|s| s.trim()),
         )
     }));
+    event!(
+        Level::INFO,
+        "loaded {} categories",
+        SharedCategory::all_cases().len()
+    );
     let bind_addr = cli.bind.clone();
     let args: args::App = cli.into();
 
@@ -60,7 +65,7 @@ async fn main() {
     let listener = TcpListener::bind(bind_addr).await.expect("failed to bind");
     event!(
         Level::INFO,
-        "Listening on http://{}",
+        "listening on http://{}",
         listener.local_addr().unwrap()
     );
     axum::serve(listener, app).await.unwrap();
