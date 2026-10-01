@@ -199,7 +199,7 @@ impl RunTask for OpenAIRunTask {
             "type": "object",
             "properties": {
                 "category": {
-                    "enum": task.categories()
+                    "enum": task.category_names()
                 }
             },
         });
