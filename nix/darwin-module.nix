@@ -45,7 +45,7 @@ in
     };
     extraOpts = lib.mkOption {
       default = null;
-      type = lib.types.nullOr lib.types.str;
+      type = with lib.types; nullOr (listOf str);
       description = "Extra command line options to use.";
     };
   };
@@ -58,7 +58,7 @@ in
           (lib.optionalString (cfg.authKey != null) "--auth-key ${cfg.authKey}")
           (lib.optionalString (cfg.extractModel != null) "--extract-model ${cfg.extractModel}")
           (lib.optionalString (cfg.captionModel != null) "--caption-model ${cfg.captionModel}")
-          (lib.optionalString (cfg.extraOpts != null) cfg.extraOpts)
+          (lib.optionalString (cfg.extraOpts != null) (lib.concatStringsSep " " cfg.extraOpts))
         ];
       in
       {
