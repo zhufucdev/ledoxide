@@ -139,7 +139,7 @@ mod tests {
     #[traced_test]
     async fn test_workflow() {
         let auth_key = "WK1wJ5ipiVvSdmdCPqNx8up8qj8GCwbm_";
-        SharedCategory::load_from_name_desc_pairs(["Shopping", "Food", "Transport", "Rent"]);
+        SharedCategory::load_from_names_only(["Shopping", "Food", "Transport", "Rent"]);
         fn check_finished_state(success: task::Success) {
             let bill = success.0;
             assert_eq!(bill.amount, 2188f32);

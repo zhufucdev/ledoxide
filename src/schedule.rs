@@ -254,7 +254,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_swap() {
-        SharedCategory::load_from_names(["No category"]);
+        SharedCategory::load_from_names_only(["No category"]);
         let scheduler = Scheduler::<MockRunner>::default();
         for i in 0..10 {
             let tcb = TaskControlBlock::new();

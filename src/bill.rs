@@ -49,6 +49,21 @@ impl SharedCategory {
             .map(|idx| SharedCategory(idx))
     }
 
+    pub fn load_from_names_only<Iter>(iter: Iter)
+    where
+        Iter: IntoIterator,
+        Iter::Item: AsRef<str>,
+    {
+        let categories = iter
+            .into_iter()
+            .map(|name| OwnedCategory {
+                name: name.as_ref().to_smolstr(),
+                description: None,
+            })
+            .collect();
+        *CATEGORIES.lock().unwrap() = Some(categories);
+    }
+
     pub fn load_from_name_desc_pairs<Iter, A, B>(iter: Iter)
     where
         Iter: IntoIterator<Item = (A, Option<B>)>,
