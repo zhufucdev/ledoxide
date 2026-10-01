@@ -9,10 +9,7 @@ use tokio::net::TcpListener;
 use tracing::{Level, event};
 
 use crate::{
-    bill::Category,
-    error::GetTaskError,
-    key::ValidKey,
-    state::AppState,
+    bill::SharedCategory, error::GetTaskError, key::ValidKey, state::AppState,
     task::TaskControlBlock,
 };
 
@@ -47,7 +44,13 @@ type TaskDesc = OpenAITaskDescriptor;
 async fn main() {
     tracing_subscriber::fmt::init();
     let cli = args::Cli::parse();
-    Category::load_from_names(&cli.categories);
+    SharedCategory::load_from_name_desc_pairs(cli.categories.iter().map(|param| {
+        let mut split = param.splitn(2, ":");
+        (
+            split.next().unwrap_or(param),
+            split.next().map(|s| s.trim()),
+        )
+    }));
     let bind_addr = cli.bind.clone();
     let args: args::App = cli.into();
 
@@ -128,7 +131,7 @@ mod tests {
     use tower::{Service, util::ServiceExt};
     use tracing_test::traced_test;
 
-    use crate::bill::Category;
+    use crate::bill::SharedCategory;
 
     use super::*;
 
@@ -136,7 +139,7 @@ mod tests {
     #[traced_test]
     async fn test_workflow() {
         let auth_key = "WK1wJ5ipiVvSdmdCPqNx8up8qj8GCwbm_";
-        Category::load_from_names(["Shopping", "Food", "Transport", "Rent"]);
+        SharedCategory::load_from_name_desc_pairs(["Shopping", "Food", "Transport", "Rent"]);
         fn check_finished_state(success: task::Success) {
             let bill = success.0;
             assert_eq!(bill.amount, 2188f32);

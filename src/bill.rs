@@ -13,45 +13,111 @@ pub struct Bill {
     pub category: Option<SmolStr>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Category(usize);
+pub trait Category {
+    fn name(&self) -> SmolStr;
+    fn description(&self) -> Option<SmolStr>;
+}
 
-impl Category {
-    pub fn name(&self) -> SmolStr {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SharedCategory(usize);
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnedCategory {
+    name: SmolStr,
+    description: Option<SmolStr>,
+}
+
+impl SharedCategory {
+    fn store(&self) -> OwnedCategory {
         CATEGORIES.lock().unwrap().as_ref().unwrap()[self.0].clone()
     }
 
-    pub fn all_cases() -> Box<[Category]> {
+    pub fn all_cases() -> Box<[SharedCategory]> {
         Box::from_iter(
-            (0..CATEGORIES.lock().unwrap().as_ref().unwrap().len()).map(|idx| Category(idx)),
+            (0..CATEGORIES.lock().unwrap().as_ref().unwrap().len()).map(|idx| SharedCategory(idx)),
         )
     }
 
-    pub fn from_name(name: impl AsRef<str>) -> Option<Category> {
+    pub fn from_name(name: impl AsRef<str>) -> Option<SharedCategory> {
         CATEGORIES
             .lock()
             .unwrap()
             .as_ref()
             .unwrap()
             .iter()
-            .position(|n| n == name.as_ref())
-            .map(|idx| Category(idx))
+            .position(|n| n.name == name.as_ref())
+            .map(|idx| SharedCategory(idx))
     }
 
-    pub fn load_from_names<Iter>(iter: Iter)
+    pub fn load_from_name_desc_pairs<Iter, A, B>(iter: Iter)
     where
-        Iter: IntoIterator,
-        Iter::Item: AsRef<str>,
+        Iter: IntoIterator<Item = (A, Option<B>)>,
+        A: AsRef<str>,
+        B: AsRef<str>,
     {
-        let names = Vec::from_iter(iter.into_iter().map(|name| name.as_ref().to_smolstr()));
-        *CATEGORIES.lock().unwrap() = Some(names);
+        let categories = iter
+            .into_iter()
+            .map(|(name, description)| OwnedCategory {
+                name: name.as_ref().to_smolstr(),
+                description: description.map(|it| it.as_ref().to_smolstr()),
+            })
+            .collect();
+        *CATEGORIES.lock().unwrap() = Some(categories);
     }
 }
 
-static CATEGORIES: LazyLock<Arc<Mutex<Option<Vec<SmolStr>>>>> =
+impl OwnedCategory {
+    pub fn only_name(name: impl AsRef<str>) -> Self {
+        Self {
+            name: name.as_ref().to_smolstr(),
+            description: None,
+        }
+    }
+
+    pub fn new(name: impl AsRef<str>, description: impl AsRef<str>) -> Self {
+        Self {
+            name: name.as_ref().to_smolstr(),
+            description: Some(description.as_ref().to_smolstr()),
+        }
+    }
+}
+
+impl Category for SharedCategory {
+    fn name(&self) -> SmolStr {
+        self.store().name
+    }
+
+    fn description(&self) -> Option<SmolStr> {
+        self.store().description
+    }
+}
+
+impl Category for OwnedCategory {
+    fn name(&self) -> SmolStr {
+        self.name.clone()
+    }
+
+    fn description(&self) -> Option<SmolStr> {
+        self.description.clone()
+    }
+}
+
+impl Into<OwnedCategory> for SharedCategory {
+    fn into(self) -> OwnedCategory {
+        self.store()
+    }
+}
+
+impl Into<OwnedCategory> for &SharedCategory {
+    fn into(self) -> OwnedCategory {
+        self.store()
+    }
+}
+
+static CATEGORIES: LazyLock<Arc<Mutex<Option<Vec<OwnedCategory>>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(None)));
 
-impl Serialize for Category {
+impl Serialize for SharedCategory {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -60,14 +126,14 @@ impl Serialize for Category {
     }
 }
 
-impl<'de> Deserialize<'de> for Category {
+impl<'de> Deserialize<'de> for SharedCategory {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let name = deserializer.deserialize_string(CategoryNameVisitor)?;
         Ok(
-            Category::from_name(&name).ok_or(serde::de::Error::invalid_value(
+            SharedCategory::from_name(&name).ok_or(serde::de::Error::invalid_value(
                 Unexpected::Str(&name),
                 &CategoryNameVisitor,
             ))?,

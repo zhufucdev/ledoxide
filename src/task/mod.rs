@@ -1,4 +1,5 @@
 pub mod descriptor;
+mod ext;
 pub mod run;
 
 #[cfg(feature = "ollama")]

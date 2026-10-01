@@ -241,11 +241,11 @@ impl<Task> Default for ScheduleQueues<Task> {
 mod tests {
     use std::iter;
 
-use smol_str::SmolStr;
+    use smol_str::SmolStr;
     use tracing_test::traced_test;
 
     use crate::{
-        bill::{Bill, Category},
+        bill::{Bill, Category, SharedCategory},
         error::RunTaskError,
         task::TaskDescriptor,
     };
@@ -254,7 +254,7 @@ use smol_str::SmolStr;
     #[tokio::test]
     #[traced_test]
     async fn test_swap() {
-        Category::load_from_names(["No category"]);
+        SharedCategory::load_from_names(["No category"]);
         let scheduler = Scheduler::<MockRunner>::default();
         for i in 0..10 {
             let tcb = TaskControlBlock::new();
@@ -289,12 +289,26 @@ use smol_str::SmolStr;
     #[derive(Default, Clone)]
     struct MockRunner;
 
+    struct EmptyCategory;
+
+    impl Category for EmptyCategory {
+        fn name(&self) -> SmolStr {
+            "".into()
+        }
+
+        fn description(&self) -> Option<SmolStr> {
+            None
+        }
+    }
+
     impl TaskDescriptor for MockTaskDescriptor {
+        type Category = EmptyCategory;
+
         fn images(&self) -> Box<[&[u8]]> {
             Box::new([])
         }
 
-        fn category_names(&self) -> Box<[SmolStr]> {
+        fn categories(&self) -> Box<[Self::Category]> {
             Box::new([])
         }
     }

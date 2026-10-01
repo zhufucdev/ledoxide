@@ -1,14 +1,11 @@
-use std::borrow::Cow;
-use std::io::{Cursor, Read as _};
 use std::iter;
 
 use async_openai::Client;
 use async_openai::config::OpenAIConfig;
 use async_openai::types::responses::{
     CreateResponseArgs, ImageDetail, InputContent, InputImageContent, InputItem, InputMessage,
-    InputParam, InputRole, Item, MessageItem, Reasoning, ReasoningEffort, ResponseFormat,
-    ResponseFormatJsonSchema, ResponseStreamEvent, ResponseTextParam,
-    TextResponseFormatConfiguration,
+    InputRole, Item, MessageItem, Reasoning, ReasoningEffort, ResponseFormatJsonSchema,
+    ResponseStreamEvent, ResponseTextParam, TextResponseFormatConfiguration,
 };
 use axum::RequestExt;
 use axum_extra::headers::Mime;
@@ -19,11 +16,10 @@ use schemars::{JsonSchema, json_schema, schema_for};
 use serde::Deserialize;
 use smol_str::{SmolStr, ToSmolStr};
 use tracing::{Level, event};
-use zip::ZipArchive;
-use zip::result::ZipError;
 
-use crate::bill::Category;
+use crate::bill::{Category, OwnedCategory, SharedCategory};
 use crate::ext::{ExtractImageBuf as _, FromEnvVars};
+use crate::task::ext::DisplayCategory;
 use crate::{
     bill::Bill,
     error::{CreateTaskError, RunTaskError},
@@ -203,7 +199,7 @@ impl RunTask for OpenAIRunTask {
             "type": "object",
             "properties": {
                 "category": {
-                    "enum": task.category_names()
+                    "enum": task.categories()
                 }
             },
         });
@@ -232,9 +228,9 @@ impl RunTask for OpenAIRunTask {
                     include_str!("../../prompt/categorization.md"),
                     notes,
                     caption,
-                    task.category_names()
+                    task.categories()
                         .iter()
-                        .map(|c| format!("- {}", c))
+                        .map(|c| format!("{}", c.bullet_item()))
                         .collect::<Vec<_>>()
                         .join("\n")
                 ),
@@ -269,10 +265,12 @@ impl RunTask for OpenAIRunTask {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct OpenAITaskDescriptor {
     images_buf: Box<[Box<[u8]>]>,
-    categories: Option<Box<[SmolStr]>>,
+    categories: Option<Box<[OwnedCategory]>>,
 }
 
 impl TaskDescriptor for OpenAITaskDescriptor {
+    type Category = OwnedCategory;
+
     fn images(&self) -> Box<[&[u8]]> {
         self.images_buf
             .iter()
@@ -280,12 +278,12 @@ impl TaskDescriptor for OpenAITaskDescriptor {
             .collect::<Box<_>>()
     }
 
-    fn category_names(&self) -> Box<[SmolStr]> {
+    fn categories(&self) -> Box<[Self::Category]> {
         self.categories.clone().unwrap_or_else(|| {
-            Category::all_cases()
+            SharedCategory::all_cases()
                 .iter()
-                .map(|c| c.name())
-                .collect::<Box<_>>()
+                .map(|c| c.into())
+                .collect::<Box<[_]>>()
         })
     }
 }
@@ -329,7 +327,7 @@ where
                         categories = Some(
                             value
                                 .into_iter()
-                                .map(|name| name.to_smolstr())
+                                .map(|name| OwnedCategory::only_name(name))
                                 .collect::<Box<_>>(),
                         );
                     }

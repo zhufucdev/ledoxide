@@ -25,8 +25,9 @@ use serde::Deserialize;
 use smol_str::{SmolStr, ToSmolStr};
 use zip::ZipArchive;
 
-use crate::bill::Category;
+use crate::bill::{OwnedCategory, SharedCategory};
 use crate::ext::{ExtractImageBuf, FromEnvVars};
+use crate::task::ext::DisplayCategory;
 use crate::{
     bill::Bill,
     error::{CreateTaskError, RunTaskError},
@@ -46,7 +47,7 @@ pub struct OllamaTaskDescriptor {
     images_buf: Box<[Box<[u8]>]>,
     lm_options: Option<ModelOptions>,
     vlm_options: Option<ModelOptions>,
-    categories: Option<Box<[SmolStr]>>,
+    categories: Option<Box<[OwnedCategory]>>,
 }
 
 pub const GEMMA_4_E4B_Q4KM: &str = "gemma4:e4b";
@@ -232,9 +233,9 @@ impl RunTask for OllamaRunTask {
                         include_str!("../../prompt/categorization.md"),
                         notes,
                         caption.response,
-                        task.category_names()
+                        task.categories()
                             .iter()
-                            .map(|c| format!("- {}", c))
+                            .map(|c| format!("{}", c.bullet_item()))
                             .collect::<Vec<_>>()
                             .join("\n")
                     ),
@@ -267,6 +268,8 @@ impl RunTask for OllamaRunTask {
 }
 
 impl TaskDescriptor for OllamaTaskDescriptor {
+    type Category = OwnedCategory;
+
     fn images(&self) -> Box<[&[u8]]> {
         self.images_buf
             .iter()
@@ -274,12 +277,12 @@ impl TaskDescriptor for OllamaTaskDescriptor {
             .collect::<Box<_>>()
     }
 
-    fn category_names(&self) -> Box<[SmolStr]> {
+    fn categories(&self) -> Box<[Self::Category]> {
         self.categories.clone().unwrap_or_else(|| {
-            Category::all_cases()
+            SharedCategory::all_cases()
                 .iter()
-                .map(|c| c.name().into())
-                .collect::<Box<_>>()
+                .map(|c| c.into())
+                .collect::<Box<[_]>>()
         })
     }
 }
@@ -345,7 +348,7 @@ where
                         categories = Some(
                             value
                                 .into_iter()
-                                .map(|name| name.to_smolstr())
+                                .map(OwnedCategory::only_name)
                                 .collect::<Box<_>>(),
                         );
                     }
@@ -404,12 +407,15 @@ mod tests {
             images_buf: Box::new([]),
             lm_options: None,
             vlm_options: None,
-            categories: Some([
-                "Shopping".into(),
-                "Food".into(),
-                "Transport".into(),
-                "Rent".into(),
-            ].into()),
+            categories: Some(
+                [
+                    OwnedCategory::only_name("Shopping"),
+                    OwnedCategory::only_name("Food"),
+                    OwnedCategory::only_name("Transport"),
+                    OwnedCategory::only_name("Rent"),
+                ]
+                .into(),
+            ),
         };
         let runner = OllamaRunTask::default();
         let bill = runner.extract(&req).await.unwrap();

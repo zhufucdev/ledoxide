@@ -4,11 +4,20 @@ use serde::{Deserialize, Serialize, ser::SerializeStruct};
 use smol_str::SmolStr;
 use strum::Display;
 
-use crate::{bill::Bill, error::RunTaskError, key};
+use crate::{
+    bill::{Bill, Category},
+    error::RunTaskError,
+    key,
+};
 
 pub trait TaskDescriptor {
+    type Category: Category;
     fn images(&self) -> Box<[&[u8]]>;
-    fn category_names(&self) -> Box<[SmolStr]>;
+    fn categories(&self) -> Box<[Self::Category]>;
+
+    fn category_names(&self) -> Box<[SmolStr]> {
+        self.categories().iter().map(|c| c.name()).collect()
+    }
 }
 
 #[derive(Debug, Clone, Display, Default)]
